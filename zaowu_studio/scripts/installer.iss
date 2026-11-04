@@ -58,7 +58,8 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'ZaowuContentStudio');
-    if MsgBox('是否同时删除工作台资料、素材和备份？此操作不可恢复。选择“否”保留资料，方便以后重新安装。', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
-      DelTree(ExpandConstant('{localappdata}\ZaowuContentStudio'), True, True, True);
+    if not UninstallSilent then
+      if MsgBox('是否同时删除工作台资料、素材和备份？此操作不可恢复。选择“否”保留资料，方便以后重新安装。', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+        DelTree(ExpandConstant('{localappdata}\ZaowuContentStudio'), True, True, True);
   end;
 end;

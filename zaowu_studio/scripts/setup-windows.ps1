@@ -6,5 +6,5 @@ if (-not (Test-Path '.venv\Scripts\python.exe')) {
 }
 & '.venv\Scripts\python.exe' -m pip install -r requirements-dev.txt
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
-& '.venv\Scripts\python.exe' -m pytest -q
+& '.venv\Scripts\python.exe' -m pytest -q --junitxml=test-results.xml
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }

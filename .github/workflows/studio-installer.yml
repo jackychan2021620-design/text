@@ -27,6 +27,22 @@ jobs:
         run: ./scripts/setup-windows.ps1
       - name: Package, smoke test, and compile installer
         run: ./scripts/build-windows.ps1
+      - name: Surface precise test failures
+        if: failure()
+        run: |
+          @'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          path=Path('test-results.xml')
+          if path.exists():
+              for case in ET.parse(path).iter('testcase'):
+                  for kind in ('failure','error'):
+                      node=case.find(kind)
+                      if node is not None:
+                          message=(node.text or node.get('message',''))[-6000:]
+                          message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+                          print('::error title='+case.get('name','Test failure')+'::'+message)
+          '@ | .venv\Scripts\python.exe -
       - uses: actions/upload-artifact@v4
         with:
           name: ZaowuContentStudio-Windows-Installer
@@ -36,7 +52,9 @@ jobs:
         if: failure()
         with:
           name: studio-build-diagnostics
-          path: zaowu_studio/build/ZaowuContentStudio/warn-ZaowuContentStudio.txt
+          path: |
+            zaowu_studio/test-results.xml
+            zaowu_studio/build/ZaowuContentStudio/warn-ZaowuContentStudio.txt
           if-no-files-found: ignore
   publish-preview:
     needs: build

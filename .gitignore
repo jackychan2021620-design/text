@@ -7,3 +7,4 @@ dist/
 *.spec
 *.sqlite3*
 *.db*
+test-results.xml
