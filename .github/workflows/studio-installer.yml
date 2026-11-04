@@ -46,7 +46,7 @@ jobs:
                           message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
                           message=message.encode('ascii','backslashreplace').decode('ascii')
                           print('::error title='+case.get('name','Test failure')+'::'+message)
-          '@ | .venv\Scripts\python.exe -
+          '@ | & '.\.venv\Scripts\python.exe' -
       - uses: actions/upload-artifact@v4
         with:
           name: ZaowuContentStudio-Windows-Installer
