@@ -9,7 +9,7 @@ import uuid
 import tempfile
 import zipfile
 import re
-from contextlib import contextmanager
+from contextlib import contextmanager,closing
 from datetime import date,datetime,timedelta
 from decimal import Decimal,InvalidOperation,ROUND_HALF_UP
 from pathlib import Path
@@ -283,7 +283,7 @@ class Store:
         folder.mkdir(exist_ok=True)
         destination=Path(destination) if destination else folder/f'studio-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}.sqlite3'
         if destination.resolve()==self.path.resolve(): raise ValueError('不能覆盖当前资料库')
-        with sqlite3.connect(destination) as target: self.db.backup(target)
+        with closing(sqlite3.connect(destination)) as target: self.db.backup(target)
         return destination
 
     def maintain(self):
@@ -294,7 +294,7 @@ class Store:
     def restore(self,source):
         source=Path(source).resolve()
         if source==self.path.resolve(): raise ValueError('请选择备份文件')
-        with sqlite3.connect(source.as_uri()+'?mode=ro',uri=True) as backup:
+        with closing(sqlite3.connect(source.as_uri()+'?mode=ro',uri=True)) as backup:
             if backup.execute('PRAGMA user_version').fetchone()[0]!=1 or backup.execute('PRAGMA integrity_check').fetchone()[0]!='ok': raise ValueError('备份版本或完整性不正确')
             expected={r['name']:{c[1] for c in self.db.execute('PRAGMA table_info("'+r['name']+'")')} for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             for table,columns in expected.items():
@@ -355,7 +355,7 @@ class Store:
                 if digest!=manifest['sha256'][name]:raise ValueError('备份校验失败：'+name)
                 if name.startswith('assets/') and digest!=target.stem:raise ValueError('素材校验失败')
             database=root/'studio.sqlite3'
-            with sqlite3.connect(database) as source:
+            with closing(sqlite3.connect(database)) as source:
                 for row in source.execute('SELECT path FROM assets'):
                     name=Path(row[0].replace('\\','/')).name
                     if 'assets/'+name not in names:raise ValueError('备份缺少被引用的素材')

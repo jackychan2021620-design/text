@@ -96,7 +96,9 @@ def test_backup_restore_invalid_rejected_and_restart(store,tmp_path):
     record(store,'offers',name='保留记录');backup=store.backup()
     record(store,'offers',name='之后新增');safety=store.restore(backup)
     assert safety.exists() and len(store.rows('offers'))==1
-    with Store(store.root).db as reopened:assert reopened.execute('SELECT name FROM offers').fetchone()[0]=='保留记录'
+    reopened=Store(store.root)
+    try:assert reopened.db.execute('SELECT name FROM offers').fetchone()[0]=='保留记录'
+    finally:reopened.close()
     invalid=tmp_path/'invalid.sqlite3'
     with sqlite3.connect(invalid) as db:db.execute('PRAGMA user_version=1')
     with pytest.raises(ValueError):store.restore(invalid)
