@@ -14,6 +14,9 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 25
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
     defaults:
       run:
         working-directory: zaowu_studio
@@ -41,6 +44,7 @@ jobs:
                       if node is not None:
                           message=(node.text or node.get('message',''))[-6000:]
                           message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+                          message=message.encode('ascii','backslashreplace').decode('ascii')
                           print('::error title='+case.get('name','Test failure')+'::'+message)
           '@ | .venv\Scripts\python.exe -
       - uses: actions/upload-artifact@v4
