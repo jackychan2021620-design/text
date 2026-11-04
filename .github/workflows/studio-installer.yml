@@ -77,8 +77,18 @@ jobs:
           GH_REPO: ${{ github.repository }}
           BUILD_SHA: ${{ github.sha }}
         run: |
+          run_gh() {
+            if output=$(gh "$@" 2>&1); then
+              printf '%s\n' "$output"
+            else
+              output="${output//'%'/'%25'}"
+              output="${output//$'\n'/'%0A'}"
+              printf '::error title=GitHub release publish::%s\n' "$output"
+              return 1
+            fi
+          }
           tag="studio-preview-${BUILD_SHA}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$BUILD_SHA" --prerelease --title "造物手作内容工作台 0.2.0 试用版" --notes "Windows x64 安装包。内置运行环境、中文安装步骤及桌面图标。发布前已执行单元测试及打包程序启动检查。真实 DeepSeek 需自行配置 Key；图像识别和平台自动抓取未接入。"
+          if ! gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            run_gh release create "$tag" --repo "$GH_REPO" --target "$BUILD_SHA" --prerelease --title "造物手作内容工作台 0.2.0 试用版" --notes "Windows x64 安装包。内置运行环境、中文安装步骤及桌面图标。发布前已执行单元测试及打包程序启动检查。真实 DeepSeek 需自行配置 Key；图像识别和平台自动抓取未接入。"
           fi
-          gh release upload "$tag" installer/*.exe --clobber
+          run_gh release upload "$tag" installer/*.exe --repo "$GH_REPO" --clobber
