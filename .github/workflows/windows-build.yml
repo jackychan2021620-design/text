@@ -1,0 +1,30 @@
+name: Windows desktop build
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'zaowu_manager/**'
+      - '.github/workflows/windows-build.yml'
+jobs:
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: zaowu_manager
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install and test
+        run: ./scripts/setup-windows.ps1
+      - name: Package
+        run: ./scripts/build-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZaowuGrowthManager-Windows-x64
+          path: zaowu_manager/dist/ZaowuGrowthManager/
+          if-no-files-found: error

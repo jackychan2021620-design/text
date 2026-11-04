@@ -1,0 +1,11 @@
+$ErrorActionPreference = 'Stop'
+Set-Location (Split-Path $PSScriptRoot -Parent)
+if (-not (Test-Path '.venv\Scripts\python.exe')) {
+    py -3.12 -m venv .venv
+    if ($LASTEXITCODE -ne 0) { throw 'Install Python 3.12 (64-bit) from python.org first.' }
+}
+& '.venv\Scripts\python.exe' -m pip install -r requirements-dev.txt
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
+& '.venv\Scripts\python.exe' -m pytest -q
+if ($LASTEXITCODE -ne 0) { throw 'Tests failed. Review the output before packaging.' }
+Write-Host 'Setup and tests completed. Run .\start-windows.bat to open ZAOWU.'
