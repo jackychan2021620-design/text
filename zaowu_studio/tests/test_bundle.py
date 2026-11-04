@@ -33,3 +33,11 @@ def test_checksum_tampering_rejected(store,tmp_path):
     with zipfile.ZipFile(good) as source,zipfile.ZipFile(bad,'w') as destination:
         for name in source.namelist():destination.writestr(name,b'corrupt' if name=='studio.sqlite3' else source.read(name))
     with pytest.raises(ValueError,match='校验'):store.restore_bundle(bad)
+
+def test_executable_disguised_as_asset_rejected(store,tmp_path):
+    package=tmp_path/'executable.zip'
+    with zipfile.ZipFile(package,'w') as file:
+        file.writestr('studio.sqlite3',b'')
+        file.writestr('manifest.json','{}')
+        file.writestr('assets/'+'a'*64+'.exe',b'not an image')
+    with pytest.raises(ValueError,match='素材类型'):store.restore_bundle(package)

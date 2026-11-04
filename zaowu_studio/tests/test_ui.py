@@ -31,6 +31,15 @@ def test_piece_edit_save_and_real_stage_progression(app,store,monkeypatch):
     form=dialog.forms[2];form.inputs['title'].setText('真实标题');form.inputs['body'].setPlainText('服务介绍');form.inputs['cta'].setText('咨询预约')
     dialog.advance();assert store.get('pieces',piece)['stage']=='待发布'
     dialog.forms[3].inputs['published_date'].setText('2026-11-04');dialog.advance();assert store.get('pieces',piece)['stage']=='已发布'
+    def fill_feedback(self):
+        self.form.inputs['views'].setText('100')
+        self.form.inputs['facts'].setPlainText('阅读已有记录，本地需求尚不明确')
+        self.form.inputs['next_action'].setPlainText('继续观察相关咨询')
+        self.accept_values()
+        return self.result()
+    monkeypatch.setattr('studio.widgets.EditDialog.exec',fill_feedback)
+    dialog.feedback();dialog.advance();assert store.get('pieces',piece)['stage']=='已复盘'
+    assert store.latest_feedback(piece)['views']==100
     dialog.reject();window.force_quit=True;window.close()
 
 def test_cancel_send_has_no_run_or_business_mutation(app,store,monkeypatch):

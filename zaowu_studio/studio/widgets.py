@@ -135,7 +135,7 @@ def scroll(widget):
     return area
 
 class EditDialog(QDialog):
-    def __init__(self,store,title,fields,values=None,business=None,parent=None,save=None):
+    def __init__(self,store,title,fields,values=None,business=None,parent=None,save=None,core_keys=None):
         super().__init__(parent)
         self.setWindowTitle(title);self.resize(640,700)
         self.save_callback=save
@@ -143,7 +143,7 @@ class EditDialog(QDialog):
         layout=QVBoxLayout(self);layout.setContentsMargins(24,22,24,20)
         layout.addWidget(label(title,'heading'))
         body=QWidget();content=QVBoxLayout(body)
-        core=fields[:4]+[f for f in fields[4:] if f.required]
+        core=[f for f in fields if f.key in core_keys] if core_keys else fields[:4]+[f for f in fields[4:] if f.required]
         advanced=[f for f in fields if f not in core]
         self.form=Fields(store,core,values,business)
         self.extra=Fields(store,advanced,values,business)

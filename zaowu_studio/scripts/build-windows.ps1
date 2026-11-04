@@ -1,4 +1,9 @@
 $ErrorActionPreference = 'Stop'
+trap {
+    $message = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+    Write-Host ('::error title=Windows package check::' + $message)
+    exit 1
+}
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $python = '.venv\Scripts\python.exe'
 & $python -m pytest -q
@@ -21,8 +26,8 @@ try {
 }
 $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
 if (-not (Test-Path $compiler)) { throw 'Install Inno Setup 6 to create the Windows installer.' }
-& $compiler 'scripts\installer.iss'
-if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
+& $compiler 'scripts\installer.iss' 2>&1 | Tee-Object -Variable compilerOutput
+if ($LASTEXITCODE -ne 0) { throw ('Installer compilation failed: ' + (($compilerOutput | Select-Object -Last 12) -join ' ')) }
 Write-Host 'Installer available in dist\installer\ZaowuContentStudio-Setup-0.2.0.exe'
 $installDir = Join-Path ([IO.Path]::GetTempPath()) ('zaowu-install-check-' + [Guid]::NewGuid().ToString('N'))
 $setupArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/DIR="' + $installDir + '"'))

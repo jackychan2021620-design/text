@@ -61,7 +61,13 @@ def edit_asset(window,asset_id,parent=None):
         if not values['name'].strip():raise ValueError('请填写素材名称')
         with store.db:store.db.execute('UPDATE assets SET name=?,description=? WHERE id=?',(values['name'].strip(),values['description'],asset_id))
     dialog=EditDialog(store,'整理素材',[f('name','名称',required=True),f('description','画面内容与可使用角度','long',hint='只填写真实画面；这段描述可以在确认后提供给 AI')],asset,parent=parent or window,save=save)
-    open_button=button('打开本地文件',lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(asset['path'])))
+    def open_file():
+        path=Path(asset['path']).resolve()
+        allowed=('.jpg','.jpeg','.png','.webp','.bmp','.mp4','.mov','.mkv','.webm')
+        if path.parent!=(store.root/'assets').resolve() or path.suffix.lower() not in allowed or not path.is_file():
+            error(dialog,'素材不存在或路径不属于当前资料目录。跨电脑请恢复包含素材的完整 ZIP。');return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+    open_button=button('打开本地文件',open_file)
     dialog.layout().insertWidget(1,open_button)
     if asset['kind']=='图片':
         pixmap=QPixmap(asset['path'])
@@ -205,7 +211,8 @@ class PieceDialog(QDialog):
         initial={k:v for k,v in (latest or {}).items() if k not in ('id','created_at','piece_id')}
         initial['observed_date']=QDate.currentDate().toString('yyyy-MM-dd')
         def save(values):self.store.add_feedback(self.piece_id,values)
-        dialog=EditDialog(self.store,'记录截至当日的累计反馈',FEEDBACK_FIELDS,initial,parent=self,save=save)
+        dialog=EditDialog(self.store,'记录截至当日的累计反馈',FEEDBACK_FIELDS,initial,parent=self,save=save,
+                          core_keys=('observed_date','views','local_inquiries','orders','facts','next_action'))
         if dialog.exec():self.refresh_previews()
 
     def reject(self):

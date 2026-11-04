@@ -343,6 +343,7 @@ class Store:
             if any(i.file_size>(1024*1024 if i.filename=='manifest.json' else 512*1024*1024) for i in entries):raise ValueError('备份单个文件过大')
             for name in names:
                 if name not in ('studio.sqlite3','manifest.json') and not re.fullmatch(r'assets/[0-9a-f]{64}\.[A-Za-z0-9]+',name):raise ValueError('备份包含不允许的路径')
+                if name.startswith('assets/') and Path(name).suffix.lower() not in ('.jpg','.jpeg','.png','.webp','.bmp','.mp4','.mov','.mkv','.webm'):raise ValueError('备份含不支持的素材类型')
             if not {'studio.sqlite3','manifest.json'}<=set(names):raise ValueError('不是完整的工作台备份')
             manifest=json.loads(archive.read('manifest.json'))
             if manifest.get('version')!=1 or set(manifest.get('sha256',{}))!=set(names)-{'manifest.json'}:raise ValueError('备份清单无效')
