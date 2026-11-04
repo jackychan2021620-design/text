@@ -1,0 +1,62 @@
+name: ZAOWU Studio Windows Installer
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'zaowu_studio/**'
+      - '.github/workflows/studio-installer.yml'
+permissions:
+  contents: read
+concurrency:
+  group: studio-installer-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: zaowu_studio
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install development environment and test
+        run: ./scripts/setup-windows.ps1
+      - name: Package, smoke test, and compile installer
+        run: ./scripts/build-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZaowuContentStudio-Windows-Installer
+          path: zaowu_studio/dist/installer/*.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: studio-build-diagnostics
+          path: zaowu_studio/build/ZaowuContentStudio/warn-ZaowuContentStudio.txt
+          if-no-files-found: ignore
+  publish-preview:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ZaowuContentStudio-Windows-Installer
+          path: installer
+      - name: Publish downloadable preview installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          tag="studio-preview-${BUILD_SHA}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$BUILD_SHA" --prerelease --title "造物手作内容工作台 0.2.0 试用版" --notes "Windows x64 安装包。内置运行环境、中文安装步骤及桌面图标。发布前已执行单元测试及打包程序启动检查。真实 DeepSeek 需自行配置 Key；图像识别和平台自动抓取未接入。"
+          fi
+          gh release upload "$tag" installer/*.exe --clobber

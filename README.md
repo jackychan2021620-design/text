@@ -1,5 +1,9 @@
 # 造物手作 AI 经营管理系统
 
+新的 **[AI 获客与内容运营工作台](zaowu_studio/README.md)** 位于 `zaowu_studio`，采用四入口与逐条内容工作流。Windows 安装包在构建成功后发布到 [Releases](https://github.com/jackychan2021620-design/text/releases)。
+
+新工作台使用独立数据库，旧版经营系统源码与数据保留。
+
 独立 Windows 桌面经营工作台源代码位于 [zaowu_manager](zaowu_manager/README.md)。
 
 包含三项业务管理、经营分析、营销与复盘、SQLite 持久化、DeepSeek 流式助手，以及 Windows 启动和打包脚本。
