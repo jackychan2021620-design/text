@@ -7,7 +7,7 @@ try {
     foreach ($file in Get-ChildItem $targets[0] -File) {
         $report.files += [ordered]@{name=$file.Name;sha256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()}
     }
-    foreach ($file in @((Join-Path $targets[0] 'BookWorkbench-Setup-1.1.2-Windows-x64.exe'),(Join-Path $targets[1] 'BookWorkbench.exe'))) {
+    foreach ($file in @((Join-Path $targets[0] 'BookWorkbench-Setup-1.1.3-Windows-x64.exe'),(Join-Path $targets[1] 'BookWorkbench.exe'))) {
         $sig = Get-AuthenticodeSignature $file
         $report.signatures += [ordered]@{name=[IO.Path]::GetFileName($file);status=$sig.Status.ToString()}
     }

@@ -1,5 +1,6 @@
 """Transparent descriptive heuristics, never personal success probabilities."""
 import statistics
+from .provenance import scope_unknown,curve_source
 
 def ratio(a,b):
     return a/b if a is not None and b is not None and b>0 else None
@@ -21,11 +22,12 @@ def product(snapshot, peers=()):
     s=snapshot;c=s['creators'];o=s['sellers'];sales=s['sales']
     import json
     curve=json.loads(s['curve'] or '[]') if isinstance(s['curve'],str) else (s['curve'] or [])
-    rate=ratio(o,c);per_seller=ratio(sales,o);per_creator=ratio(sales,c);shape=trend(curve)
-    result={'达人出单率':rate,'出单达人人均销量':per_seller,'参与达人人均销量':per_creator,'销量趋势':shape,'曲线来源':'读图估算，仅趋势参考' if '【曲线读图估算】' in (s.get('notes') or '') else '用户录入或未提供曲线'}
-    valid=[p for p in peers if p.get('sales') is not None and p.get('creators') and p.get('sellers') is not None]
+    unknown=scope_unknown(s.get('notes'));denominator=None if unknown else c
+    rate=ratio(o,denominator);per_seller=ratio(sales,o);per_creator=ratio(sales,denominator);shape=trend(curve)
+    result={'达人出单率':rate,'出单达人人均销量':per_seller,'参与达人人均销量':per_creator,'销量趋势':shape,'曲线来源':'读图估算，仅趋势参考' if curve_source(s.get('notes'))=='读图估算' else '用户录入或未提供曲线'}
+    valid=[p for p in peers if p.get('sales') is not None and p.get('creators') and p.get('sellers') is not None and not scope_unknown(p.get('notes'))]
     if s['period_days']!=90 or rate is None or sales is None:
-        result.update(等级='数据不足',不确定因素='需要90天统计及有效带货人数、出单人数、销量');return result
+        result.update(等级='数据不足',不确定因素='带货人数周期待确认；数据可以保存，但暂不计算以带货人数为分母的指标' if unknown else '需要90天统计及有效带货人数、出单人数、销量');return result
     demand=sum(p['sales']<=sales for p in valid)/len(valid) if len(valid)>=5 else None
     coverage=sum(ratio(p['sellers'],p['creators'])<=rate for p in valid)/len(valid) if len(valid)>=5 else None
     level='值得关注'

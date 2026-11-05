@@ -42,10 +42,10 @@ def test_long_mobile_layout_is_tiled_and_periods_are_not_mixed():
     assert values['creators']['value']==105;assert values['creators']['warning']
     assert '受众' in doc['text'].replace(' ','')
 
-def test_outside_period_candidate_is_not_checked_by_default(app):
+def test_outside_period_candidate_is_visible_with_warning(app):
     proposals={'creators':{'value':105,'source':'带货人数105','warning':'周期未标明'},'sales':{'value':1194,'source':'90天销量'}}
     d=OCRReviewDialog('data_snapshots',proposals,{},FIXTURE)
-    assert not d.checks['creators'].isChecked();assert d.checks['sales'].isChecked();d.apply();assert 'creators' not in d.approved
+    assert d.checks['creators'].isChecked();assert d.inputs['creators'].text()=='105';assert d.checks['sales'].isChecked();d.apply();assert d.approved['creators']==105
 
 def chart_image():
     image=QImage(500,300,QImage.Format.Format_RGB32);image.fill(QColor('white'))
@@ -84,6 +84,6 @@ def test_confirmed_curve_is_saved_with_estimate_provenance(app,store,graph,tmp_p
     def approve(review):review.curve_result=curve;review.apply();return review.DialogCode.Accepted
     with patch.object(OCRReviewDialog,'exec',approve):d.got_ocr({'text':'销量曲线','words':[]})
     assert len(json.loads(d.fields['curve'].toPlainText()))==90
-    assert '【曲线读图估算】' in d.fields['notes'].toPlainText()
+    assert '【曲线读图估算】' in d.values()['notes'];assert '【曲线读图估算】' not in d.fields['notes'].toPlainText()
     d.fields['confirmed'].setChecked(True);d.save();assert hasattr(d,'saved_id'),d.notice.text()
     assert store.analyze(graph[1])['曲线来源']=='读图估算，仅趋势参考'

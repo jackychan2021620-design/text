@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
  QHeaderView,QListWidget,QStackedWidget,QFileDialog,QMessageBox,QInputDialog,QSplitter,QSystemTrayIcon,QMenu,QGraphicsOpacityEffect)
 from .model import SCHEMA
 from . import APP_VERSION
+from .provenance import split_notes,combine_notes,scope_unknown,curve_source,UNKNOWN,CONFIRMED
+from .curve_field import CurveField
 from .store import today,encode
 from .services import AIWorker,OCRWorker,api_key,save_key,endpoint,autorun,SYSTEM
 
@@ -65,7 +67,7 @@ class OCRReviewDialog(QDialog):
         from .ocr_fields import LABELS
         for key,title,_,_ in SCHEMA[table][1]:
             if key not in LABELS.get(table,{}) and not (key=='period_days' and key in proposals):continue
-            suggestion=proposals.get(key);check=QCheckBox('填入');check.setChecked(bool(suggestion) and not current.get(key) and not suggestion.get('warning'))
+            suggestion=proposals.get(key);check=QCheckBox('填入');check.setChecked(bool(suggestion) and not current.get(key) )
             value=QLineEdit(str(suggestion['value']) if suggestion else '')
             value.textEdited.connect(lambda _,c=check:c.setChecked(True))
             row=QWidget();l=QHBoxLayout(row);l.setContentsMargins(0,0,0,0);l.addWidget(check);l.addWidget(value)
@@ -78,9 +80,6 @@ class OCRReviewDialog(QDialog):
         if table=='data_snapshots':
             self.curve_info=label('销量曲线需要读图和坐标校准，不能由文字OCR自动恢复精确日销量。');layout.addWidget(self.curve_info)
             layout.addWidget(button('提取销量曲线（需核对坐标）',self.open_curve))
-        if ocr_text:
-            layout.addWidget(label('整页识别全文（未匹配到字段的信息也会保存）'))
-            raw=QTextEdit();raw.setReadOnly(True);raw.setPlainText(ocr_text);raw.setMaximumHeight(130);layout.addWidget(raw)
         self.notice=label('');layout.addWidget(self.notice)
         self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('确认填入待核对字段')
@@ -104,8 +103,9 @@ class OCRReviewDialog(QDialog):
 class Editor(QDialog):
     def __init__(self,store,table,record=None,parent=None,initial=None):
         super().__init__(parent);self.store=store;self.table=table;self.record=dict(record or {});self.fields={};self.worker=None
-        self.kinds={key:kind for key,_,kind,_ in SCHEMA[table][1]};self.relation_hints={};self.restore_notices=[]
-        self.read_only=bool(record and table in ('data_snapshots','advertising_records'))
+        self.kinds={key:kind for key,_,kind,_ in SCHEMA[table][1]};self.relation_hints={};self.attachment_labels={};self.restore_notices=[]
+        self.revision_of=record['id'] if record and table in ('data_snapshots','advertising_records') else None
+        self.read_only=False
         self.draft_key='draft:'+table+':'+str(self.record.get('id','new'))
         if not self.read_only:
             try:
@@ -113,14 +113,20 @@ class Editor(QDialog):
                 if isinstance(draft,dict):self.record.update(draft)
             except (TypeError,ValueError):self.restore_notices.append('旧草稿无法读取，已打开可编辑表单。')
         if initial:self.record.update(initial)
-        self.setWindowTitle(('查看快照' if self.read_only else '编辑')+' · '+SCHEMA[table][0]);self.resize(820,min(900,QApplication.primaryScreen().availableGeometry().height()-70))
+        self.raw_ocr=self.record.get('ocr_text') or ''
+        note_key='notes' if table=='data_snapshots' else 'other_metrics' if table=='advertising_records' else None
+        self.note_key=note_key
+        self.business_notes,self.audit_notes=split_notes(self.record.get(note_key)) if note_key else ('',[])
+        self.setWindowTitle(('编辑快照 · 另存修订版' if self.revision_of else '编辑')+' · '+SCHEMA[table][0]);self.resize(820,min(900,QApplication.primaryScreen().availableGeometry().height()-70))
         outer=QVBoxLayout(self);scroll=QScrollArea();scroll.setWidgetResizable(True);body=QWidget();self.form=QFormLayout(body);scroll.setWidget(body);outer.addWidget(scroll)
         for key,title,kind,required in SCHEMA[table][1]:
+            if key=='ocr_text':continue
             value=self.record.get(key)
             if value is None and not record:
                 if kind=='date' and required:value=today()
                 elif key=='period_days':value=90
                 elif kind=='bool':value=0
+            if key==self.note_key:value=self.business_notes
             if isinstance(kind,list):
                 w=QComboBox();w.addItems(kind)
                 if value is not None:w.setCurrentText(str(value))
@@ -134,8 +140,9 @@ class Editor(QDialog):
                 draft_text=self.record.get('_relation_text',{})
                 raw=draft_text.get(key) if isinstance(draft_text,dict) else None
                 if kind=='product_links' and raw and w.currentData() is None:w.setEditText(raw)
-            elif kind=='bool':w=QCheckBox('已核对，允许保存');w.setChecked(bool(value))
-            elif kind in ('long','curve'):
+            elif kind=='bool':w=QCheckBox('已核对录入数据，允许保存');w.setChecked(bool(value))
+            elif kind=='curve':w=CurveField(value,curve_source(self.record.get('notes')));w.extractRequested.connect(self.extract_curve);w.provenanceChanged.connect(self.add_provenance)
+            elif kind=='long':
                 w=QTextEdit();w.setMaximumHeight(110);w.setPlainText(str(value or ''))
             else:w=QLineEdit('' if value is None else str(value))
             self.fields[key]=w
@@ -145,26 +152,48 @@ class Editor(QDialog):
                 self.form.addRow(title+(' *' if required else ''),wrapper)
                 hint=label('');self.relation_hints[key]=hint;self.form.addRow('',hint);self.update_relation_hint(key)
             elif kind in ('image','file'):
-                wrapper=QWidget();row=QHBoxLayout(wrapper);row.setContentsMargins(0,0,0,0);row.addWidget(w)
+                wrapper=QWidget();row=QHBoxLayout(wrapper);row.setContentsMargins(0,0,0,0)
+                w.setParent(self);w.hide();caption=label('已选择附件' if value else '尚未选择附件');row.addWidget(caption,1);self.attachment_labels[key]=caption
+                w.textChanged.connect(lambda text,c=caption:c.setText('已保存附件，可查看或重新选择' if text else '尚未选择附件'))
                 row.addWidget(button('选择附件',lambda checked=False,k=key:self.pick(k)))
+                if kind=='image':row.addWidget(button('查看原图',lambda checked=False,k=key:self.open_attachment(k)))
                 row.addWidget(button('移除',lambda checked=False,k=key:self.remove_attachment(k)));self.form.addRow(title,wrapper)
-            else:self.form.addRow(title+(' *' if required else ''),w)
+            else:self.form.addRow(('销量走势图' if kind=='curve' else title)+(' *' if required else ''),w)
+            if key=='creators':
+                self.creator_scope=QComboBox();self.creator_scope.addItems(['已确认与本次统计周期一致','页面概览，统计周期待确认'])
+                self.creator_scope.setCurrentIndex(int(scope_unknown(self.record.get('notes'))));self.form.addRow('带货人数统计范围',self.creator_scope)
         self.preview=QLabel();self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter);self.form.addRow(self.preview)
-        if 'ocr_text' in self.fields:
+        if 'ocr_text' in self.kinds:
             self.ocr_button=button('重新识别截图并核对指标',self.recognize);self.form.addRow(self.ocr_button)
             self.form.addRow(label('选择截图后会自动识别并打开指标核对。人工确认填入后，还需勾选“已核对”再保存。曲线可手工录入，或读图提取并校准；估算来源会写入备注。'))
-        self.notice=label('表单草稿自动保存；点击保存后进入正式档案。快照只能追加，不能覆盖。');outer.addWidget(self.notice)
+        self.notice=label('修改后点击“保存修订版”，原快照会保留。' if self.revision_of else '表单草稿自动保存；点击保存后进入正式档案。');outer.addWidget(self.notice)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText('保存');buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText('保存修订版' if self.revision_of else '保存');buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
         buttons.accepted.connect(self.save);buttons.rejected.connect(self.reject);outer.addWidget(buttons);self.buttons=buttons
         self.draft_timer=QTimer(self);self.draft_timer.setSingleShot(True);self.draft_timer.timeout.connect(self.save_draft)
         for w in self.fields.values():
             signal=(w.editTextChanged if w.isEditable() else w.currentIndexChanged) if isinstance(w,QComboBox) else w.toggled if isinstance(w,QCheckBox) else w.textChanged
             signal.connect(lambda *args:self.draft_timer.start(500))
-        buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(not self.read_only)
+        if hasattr(self,'creator_scope'):self.creator_scope.currentIndexChanged.connect(lambda *args:self.draft_timer.start(500))
+        buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(True)
         for key in ('cover','screenshot','media'):
             if key in self.fields and self.fields[key].text():self.restore_attachment(key)
         if self.restore_notices:self.notice.setText('\n'.join(self.restore_notices))
+    def add_provenance(self,note):
+        if not self.audit_notes or self.audit_notes[-1]!=note:self.audit_notes.append(note)
+        self.draft_timer.start(500)
+    def extract_curve(self):
+        from .curve_ui import CurveDialog
+        try:
+            value=self.fields['screenshot'].text()
+            if not value:raise ValueError('请先选择包含销量走势图的截图')
+            path=self.store.asset(value) if value.startswith('assets/') else Path(value)
+            dialog=CurveDialog(path,getattr(self,'last_ocr_words',[]),parent=self)
+            if dialog.exec():
+                result=dialog.result_data;self.fields['curve'].set_curve(result['values'],'读图估算',result['note'])
+                self.fields['confirmed'].setChecked(False)
+                self.notice.setText('销量走势图已更新，请核对后保存。')
+        except (ValueError,OSError) as exc:self.notice.setText(str(exc))
     def describe(self,table,r):
         if table=='product_links':return f'#{r["id"]} '+self.store.get('books',r['book_id'])['name']+' · '+r['url']
         return f'#{r["id"]} '+str(r.get('name') or r.get('code') or '')
@@ -197,6 +226,12 @@ class Editor(QDialog):
             self.reload_relation(key,dialog.saved_id);self.update_relation_hint(key)
             return True
         return False
+    def open_attachment(self,key):
+        try:
+            value=self.fields[key].text();path=self.store.asset(value) if value.startswith('assets/') else Path(value)
+            if not value or not path.is_file():raise ValueError('请先选择图片，或重新选择已丢失的附件')
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve())))
+        except (ValueError,OSError) as exc:self.notice.setText(str(exc))
     def remove_attachment(self,key):
         self.fields[key].clear();self.preview.clear();self.notice.setText('已从当前表单移除附件；其他草稿内容保留，可重新选择。')
     def restore_attachment(self,key):
@@ -240,6 +275,8 @@ class Editor(QDialog):
             self.ocr_source=self.fields['screenshot'].text()
             self.worker=OCRWorker(str(path),self);self.worker.result.connect(self.got_ocr);self.worker.failed.connect(self.ocr_failed)
             self.worker.finished.connect(lambda:self.ocr_button.setEnabled(True));self.ocr_button.setEnabled(False)
+            self.buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(False)
+            self.worker.finished.connect(lambda:self.buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(True))
             self.notice.setText('正在本地识别截图，完成后将打开数据核对；不会上传图片。');self.worker.start()
         except (ValueError,OSError) as exc:self.notice.setText(str(exc))
     def ocr_failed(self,text):self.notice.setText('截图识别未完成：'+text+'。可重新识别或手动填写；附件和草稿已保留。')
@@ -248,20 +285,21 @@ class Editor(QDialog):
         if getattr(self,'ocr_source',self.fields['screenshot'].text())!=self.fields['screenshot'].text():
             self.notice.setText('截图已更换或移除，未应用旧截图的识别结果。');return
         if isinstance(document,str):document={'text':document}
-        self.fields['ocr_text'].setPlainText(document['text']);proposals=propose_fields(document,self.table)
+        self.raw_ocr=document['text'];self.draft_timer.start(500);self.last_ocr_words=document.get('words',[]);proposals=propose_fields(document,self.table)
         review=OCRReviewDialog(self.table,proposals,self.values(),self.store.asset(self.fields['screenshot'].text()),self,ocr_text=document['text'])
         review.words=document.get('words',[])
         if review.exec():
             for key,value in review.approved.items():self.fields[key].setText(str(value))
             if review.curve_result and 'curve' in self.fields:
-                self.fields['curve'].setPlainText(encode(review.curve_result['values']))
-                previous=self.fields['notes'].toPlainText();self.fields['notes'].setPlainText(previous+('\n' if previous else '')+review.curve_result['note'])
+                self.fields['curve'].set_curve(review.curve_result['values'],'读图估算',review.curve_result['note'])
+            if 'creators' in review.approved and proposals.get('creators',{}).get('warning') and hasattr(self,'creator_scope'):self.creator_scope.setCurrentIndex(1)
             if 'confirmed' in self.fields:self.fields['confirmed'].setChecked(False)
             self.notice.setText(f'已填入 {len(review.approved)} 项待核对指标。请对照原图检查，勾选“已核对”后保存；未识别字段可手动填写。')
         else:self.notice.setText('原始识别文字已保留，未改变数值。可重新识别或手动填写。')
     def values(self):
         out={}
         for key,_,kind,_ in SCHEMA[self.table][1]:
+            if key=='ocr_text':out[key]=self.raw_ocr;continue
             w=self.fields[key]
             if isinstance(kind,list):v=w.currentText()
             elif kind in SCHEMA:v=self.relation_value(key)
@@ -269,6 +307,12 @@ class Editor(QDialog):
             elif kind in ('long','curve'):v=w.toPlainText()
             else:v=w.text()
             out[key]=v
+        if self.note_key:
+            notes=combine_notes(out[self.note_key],self.audit_notes)
+            if hasattr(self,'creator_scope'):
+                unknown=self.creator_scope.currentIndex()==1
+                if unknown!=scope_unknown(notes):notes=combine_notes(notes,[UNKNOWN if unknown else CONFIRMED])
+            out[self.note_key]=notes
         return out
     def save_draft(self):
         if not self.read_only:
@@ -284,7 +328,10 @@ class Editor(QDialog):
                     matches=[r for r in self.store.rows('product_links') if r['url']==url]
                     if len(matches)>1:raise ValueError('这个链接有多个商品档案，请从列表选择所属图书对应的商品。')
                     if not self.create_related(key):self.notice.setText('已保留采集草稿，请先补充该链接的所属图书再保存。');return
-            self.saved_id=self.store.save(self.table,self.values(),self.record.get('id'));self.draft_timer.stop()
+            values=self.values()
+            if self.revision_of:
+                key=self.note_key;values[key]=combine_notes(values.get(key),[f'【快照修订】修订自记录#{self.revision_of}，原记录保留。'])
+            self.saved_id=self.store.save(self.table,values,None if self.revision_of else self.record.get('id'));self.draft_timer.stop()
             self.store.settings({self.draft_key:'{}'});self.accept()
         except Exception as exc:self.notice.setText(str(exc))
     def reject(self):

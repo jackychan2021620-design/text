@@ -1,6 +1,6 @@
 import sys
 from PySide6.QtCore import QLockFile,QTimer
-from PySide6.QtWidgets import QApplication,QMessageBox
+from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox
 from .store import Store,data_dir
 from .ui import MainWindow,Editor,OCRReviewDialog
 from . import APP_VERSION
@@ -43,7 +43,25 @@ def main():
             finally:store.settings({'draft:data_snapshots:new':previous})
             from .curve_ui import CurveDialog
             curve_probe=CurveDialog(resources/'mobile-layout-test.png',parent=window);curve_probe.reject()
-            report={'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+            # Exercise the exact saved-snapshot edit/save path in a throwaway DB.
+            import tempfile
+            from .store import today
+            with tempfile.TemporaryDirectory(prefix='book-revision-check-') as probe_root:
+                probe_store=Store(probe_root)
+                try:
+                    book_id=probe_store.save('books',{'name':'diagnostic book'})
+                    product_id=probe_store.save('product_links',{'book_id':book_id,'url':'https://example.invalid/diagnostic','status':'待分析'})
+                    original=probe_store.save('data_snapshots',{'product_id':product_id,'collected':today(),'period_days':90,'confirmed':1,'sales':500,'curve':'[1,2,3,4,5,6,7]'})
+                    edit=Editor(probe_store,'data_snapshots',probe_store.get('data_snapshots',original),window)
+                    if 'ocr_text' in edit.fields:raise ValueError('Raw OCR editor still visible')
+                    if edit.fields['curve'].plot.series.count()!=7:raise ValueError('Saved curve chart failed to render')
+                    edit.fields['sales'].setText('1194');save=edit.buttons.button(QDialogButtonBox.StandardButton.Save)
+                    if not save.isEnabled():raise ValueError('Saved-snapshot Save button disabled')
+                    save.click()
+                    if not hasattr(edit,'saved_id') or edit.saved_id==original:raise ValueError('Snapshot revision save failed')
+                    if probe_store.get('data_snapshots',original)['sales']!=500 or probe_store.get('data_snapshots',edit.saved_id)['sales']!=1194:raise ValueError('Revision did not preserve original data')
+                finally:probe_store.close()
+            report={'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
                     'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
             (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
             QTimer.singleShot(500,app.quit)

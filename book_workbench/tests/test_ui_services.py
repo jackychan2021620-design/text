@@ -21,7 +21,7 @@ def test_every_page_forms_and_edit_persist(app,store,graph):
         assert not any('unhashable' in x or 'Traceback' in x for x in labels)
     for table in SCHEMA:
         dialog=Editor(store,table,parent=window)
-        assert len(dialog.fields)==len(SCHEMA[table][1]);dialog.reject()
+        assert set(dialog.fields)=={f[0] for f in SCHEMA[table][1] if f[0]!='ocr_text'};assert set(dialog.values())=={f[0] for f in SCHEMA[table][1]};dialog.reject()
         dialog=Editor(store,table,store.rows(table)[0],window);assert dialog.values();dialog.reject()
     editor=Editor(store,'books',parent=window);editor.fields['name'].setText('新增测试图书');editor.save()
     assert store.get('books',editor.saved_id)['name']=='新增测试图书'
