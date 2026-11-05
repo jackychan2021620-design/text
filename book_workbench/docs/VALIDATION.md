@@ -6,7 +6,9 @@
 
 抖音读取与100赞提醒仅用合成公开页面协议测试，包括账号归属隔离、挂车与文案线索分离、未知／缩写赞数不当成精确值、99→100首次提醒、回落再增长不重复、失败保留缓存／成功时间、备份恢复与默认不启动网络。当前云环境抖音访问被代理拒绝，真实账号与挂车兼容性未验收；监测页明确标识试用，不把失败记为成功。
 
-Windows V1.1.5初轮完整构建 [42049908027](https://github.com/jackychan2021620-design/text/actions/runs/42049908027) 已通过136项测试、实际EXE、中文路径安装与Defender扫描。补充的文字复制／Tab顺序细节已通过本地复测，正在生成最终附件。验收路径见 [交互验收记录](INTERACTION-ACCEPTANCE.md)。
+Windows V1.1.5最终构建 [42051606095](https://github.com/jackychan2021620-design/text/actions/runs/42051606095) 已成功，源码提交 `8e504e8`。全部136项测试通过；实际打包程序及中文目录安装后的程序完成单书推荐、即时按钮反馈、200ms搜索定时器、固定操作列、监测页本地加载、回收站、保存修订、图表与内置OCR检查。说明文字可复制但不进入表单Tab序列，键盘依次进入输入字段。安装包及展开程序均通过Defender扫描；该结果不保证安全，也不表示Chrome解除拦截。没有使用真实DeepSeek账户联调。
+
+[下载最终V1.1.5程序附件](https://github.com/jackychan2021620-design/text/actions/runs/42051606095/artifacts/13427937145)，约236MB；安装文件为 `BookWorkbench-Setup-1.1.5-Windows-x64.exe`，便携包为 `BookWorkbench-1.1.5-Windows-x64-portable.zip`。GitHub外层附件SHA256：`9a7cfaa8bfb88c1da6fc2f984967c5f73d7cf86b99f0e6c5baa2c38b2dad0dbe`。保持原AppId及数据库版本1，覆盖安装保留资料。验收路径见 [交互验收记录](INTERACTION-ACCEPTANCE.md)。
 
 ## V1.1.4：三档规则和误录快照回收站
 
