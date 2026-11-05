@@ -1,10 +1,13 @@
 # 图书带货智能选品工作台 V1.1.1
 
+> 当前下载状态：用户报告 Chrome 将 V1.1.1 ZIP 标记为危险下载。原始附件已完成 Windows Defender 扫描，未检出威胁，但这不能确认 Chrome 误报或替代其判定。具体拦截原因仍未确认，暂不建议绕过警告运行。[查看原始包检查记录](https://github.com/jackychan2021620-design/text/actions/runs/42006406852)。
+
+
 独立的 Python / PySide6 / SQLite 桌面应用。与仓库内的造物系统不共享数据库、设置或凭据。本地基础功能离线可用，无演示订单或预填经营数字。
 
 ## Windows用户：直接运行
 
-**[下载V1.1.1 Windows修复版](https://github.com/jackychan2021620-design/text/actions/runs/42001014433/artifacts/13401944459)**（外层ZIP约235MB，需要登录GitHub）。
+**[V1.1.1历史附件（Chrome拦截调查中）](https://github.com/jackychan2021620-design/text/actions/runs/42001014433/artifacts/13401944459)**（外层ZIP约235MB，需要登录GitHub）。
 
 Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
 
