@@ -7,7 +7,7 @@
 
 ## Windows用户：直接运行
 
-V1.1.4新增三档简明推荐及误录快照回收站。下载入口在Windows构建通过后更新。
+**[下载V1.1.4 Windows程序包](https://github.com/jackychan2021620-design/text/actions/runs/42033028592/artifacts/13417311846)**（需登录GitHub）。本版新增三档简明推荐及误录快照回收站，通过Windows测试和Defender扫描；仍未正式签名，未确认Chrome放行。
 
 Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
 
