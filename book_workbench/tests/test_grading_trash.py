@@ -15,28 +15,39 @@ from conftest import record
 def samples():
     return [{'creators':100,'sellers':10*(i+1),'sales':100*(i+1)**2,'period_days':90,'confirmed':1,'curve':'[10,10,10,10,10,10,10]','notes':''} for i in range(5)]
 
-@pytest.mark.parametrize('index,shape,expected',[(4,'稳定销售型','非常适合'),(3,'持续增长型','非常适合'),(2,'单次爆发型','适合'),(0,'持续衰退型','直接放弃'),(0,'稳定销售型','适合')])
-def test_three_tiers_fixed_relative_rules(index,shape,expected):
-    peers=samples();r=grade(peers[index],peers,shape)
-    assert r['等级']==expected;assert r['等级'] in LEVELS;assert len(r['理由'])<100
-    assert grade(peers[index],list(reversed(peers)),shape)['等级']==expected
+@pytest.mark.parametrize('snapshot,shape,expected',[
+    ({'creators':100,'sellers':30,'sales':1200},'稳定销售型','非常适合'),
+    ({'creators':100,'sellers':20,'sales':1000},'持续增长型','非常适合'),
+    ({'creators':100,'sellers':10,'sales':500},'单次爆发型','适合'),
+    ({'creators':100,'sellers':1,'sales':2},'持续衰退型','直接放弃'),
+    ({'creators':100,'sellers':1,'sales':2},'稳定销售型','适合'),
+])
+def test_single_book_uses_absolute_rules_independent_of_peers(snapshot,shape,expected):
+    p=samples()[0]|snapshot
+    for peers in ([],[p],samples(),list(reversed(samples()))):
+        r=grade(p,peers,shape);assert r['等级']==expected;assert r['等级'] in LEVELS;assert len(r['理由'])<100
 
 @pytest.mark.parametrize('change',[{'sales':None},{'creators':None},{'period_days':30},{'notes':UNKNOWN},{'confirmed':0},{'creators':0}])
 def test_missing_or_mismatched_data_is_not_abandon(change):
     peers=samples();r=grade(peers[0]|change,peers,'持续衰退型');assert r['等级'] is None;assert r['状态']=='待补数据'
 
-def test_insufficient_peers_and_curve_are_pending():
-    peers=samples();assert grade(peers[-1],peers[:3],'稳定销售型')['等级'] is None
-    assert grade(peers[-1],peers,'数据不足')['等级'] is None
-    assert grade(peers[-1],peers,'稳定销售型',{'high_pct':95})['等级']=='适合'
+def test_insufficient_peers_and_curve_do_not_block_single_book():
+    p=samples()[-1]
+    assert grade(p,[],'稳定销售型')['等级']=='非常适合'
+    assert grade(p,[p],'数据不足')['等级']=='适合'
+    assert '曲线不足' in grade(p,[p],'数据不足')['理由']
+    assert grade(p,[],'稳定销售型',{'high_sales':3000})['等级']=='适合'
+    assert '同类百分位' not in grade(p,[p],'稳定销售型')
+    assert '同类百分位' in grade(p,samples(),'稳定销售型')
+    assert grade(p,[],'稳定销售型')['等级']==grade(p,samples(),'稳定销售型')['等级']
 
-def test_zero_outcomes_and_ties_are_not_missing_or_false_top():
-    p=samples()[0]|{'sellers':0,'sales':0};assert grade(p,[p],'低销量型')['等级']=='直接放弃'
-    peers=[samples()[0].copy() for _ in range(5)]
-    assert percentile(100,[100]*5)==50;assert grade(peers[0],peers,'稳定销售型')['等级']=='适合'
-    assert grade(peers[0]|{'sellers':0},peers,'稳定销售型')['等级'] is None
+def test_zero_outcomes_ties_and_inconsistent_counts():
+    p=samples()[0]|{'sellers':0,'sales':0};assert grade(p,[],'低销量型')['等级']=='直接放弃'
+    assert percentile(100,[100]*5)==50
+    assert grade(samples()[0]|{'sellers':0},[],'稳定销售型')['等级'] is None
+    assert grade(samples()[0]|{'sales':5},[],'稳定销售型')['等级'] is None
 
-@pytest.mark.parametrize('rules',[{'min_peers':1},{'high_pct':25,'low_pct':60},{'high_pct':'nan'},{'low_pct':-1}])
+@pytest.mark.parametrize('rules',[{'min_peers':1},{'high_rate':5,'low_rate':20},{'high_sales':'nan'},{'low_sales':-1},{'high_sellers':1.5},{'high_rate':101}])
 def test_invalid_grading_configuration_rejected(rules):
     with pytest.raises(ValueError):validate_rules(rules)
 
@@ -117,10 +128,20 @@ def test_ui_delete_and_recycle_restore_real_row(app,store,graph):
     bad=record(store,'data_snapshots',product_id=graph[1]);good=record(store,'data_snapshots',product_id=graph[1],sales=1194)
     window=MainWindow(store);window.nav.setCurrentRow(2);window.show();app.processEvents();window.table.selectRow(1)
     delete=next(b for b in window.center.findChildren(QPushButton) if b.text()=='删除')
-    with patch.object(QMessageBox,'question',lambda *args:QMessageBox.StandardButton.Yes):QTest.mouseClick(delete,Qt.MouseButton.LeftButton)
+    def confirm_delete():
+        dialog=QApplication.activeModalWidget();dialog.findChild(QPushButton,'confirmAction').click()
+    QTimer.singleShot(0,confirm_delete);QTest.mouseClick(delete,Qt.MouseButton.LeftButton)
     assert [r['id'] for r in window.visible]==[good]
     def restore():
         dialog=QApplication.activeModalWidget();table=dialog.findChild(QTableWidget);table.selectRow(0)
         b=next(x for x in dialog.findChildren(QPushButton) if x.text()=='恢复选中记录');QTest.mouseClick(b,Qt.MouseButton.LeftButton);dialog.accept()
     QTimer.singleShot(0,restore);window.recycle_bin('data_snapshots')
     assert {r['id'] for r in window.visible}=={bad,good};window.quitting=True;window.close()
+
+
+def test_analysis_cache_invalidates_on_snapshot_delete_restore_and_rule_change(store,graph):
+    p=graph[1];id=record(store,'data_snapshots',product_id=p,creators=100,sellers=30,sales=1200,curve='20,20,20,20,20,20,20')
+    assert store.analyze(p)['等级']=='非常适合'
+    store.settings({'grade_high_sales':'1500'});assert store.analyze(p)['等级']=='适合'
+    store.delete('data_snapshots',id);assert store.analyze(p)['等级'] is None
+    store.restore_deleted('data_snapshots',id);assert store.analyze(p)['等级']=='适合'

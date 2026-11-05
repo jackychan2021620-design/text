@@ -4,39 +4,57 @@ import os
 import sys
 from datetime import date
 from pathlib import Path
-from PySide6.QtCore import Qt,QTimer,QUrl,QPropertyAnimation
+from PySide6.QtCore import Qt,QTimer,QUrl,QPropertyAnimation,QSignalBlocker
 from PySide6.QtGui import QPixmap,QDesktopServices,QIcon,QPainter,QColor
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,
  QLineEdit,QTextEdit,QComboBox,QCompleter,QCheckBox,QDialog,QDialogButtonBox,QScrollArea,QTableWidget,QTableWidgetItem,
  QHeaderView,QListWidget,QStackedWidget,QFileDialog,QMessageBox,QInputDialog,QSplitter,QSystemTrayIcon,QMenu,QGraphicsOpacityEffect)
+from .experience import (Dialog as QDialog,FeedbackButton,DataTable,selectable,toast,confirm,install_policy,reduced_motion,readable,DURATION,clean_markdown,SmoothComboBox as QComboBox)
+from .monitor_ui import MonitorController,MonitorPanel
 from .model import SCHEMA
 from . import APP_VERSION
 from .provenance import split_notes,combine_notes,scope_unknown,curve_source,UNKNOWN,CONFIRMED
 from .curve_field import CurveField
-from .grading import render as render_grades,rules_text,validate_rules
+from .grading import render as render_grades,rules_text,validate_rules,DEFAULTS
 from .store import today,encode
-from .services import AIWorker,OCRWorker,api_key,save_key,endpoint,autorun,SYSTEM
+from .services import AIWorker,OCRWorker,BackupWorker,api_key,save_key,endpoint,autorun,SYSTEM
 
-STYLE='''QWidget{font-family:"Microsoft YaHei UI","Noto Sans CJK SC",sans-serif;font-size:14px;color:#303936;background:#f5f5f1;}
-QMainWindow{background:#f5f5f1;} QLabel#heading{font-size:25px;font-weight:600;} QLabel#muted{color:#717b76;}
-QPushButton{background:#e4ebe6;border:1px solid #d7e0da;border-radius:12px;padding:9px 14px;} QPushButton:hover{background:#d4e5dd;} QPushButton:disabled{color:#9caaa0;}
-QLineEdit,QTextEdit,QComboBox,QTableWidget,QListWidget{background:#fff;border:1px solid #dce1db;border-radius:12px;padding:7px;selection-background-color:#d0e6dc;selection-color:#253e34;}
-QHeaderView::section{background:#e9ede7;padding:9px;border:0;color:#56655c;} QTableWidget{gridline-color:#ecefea;} QListWidget::item{padding:13px;} QListWidget::item:selected{background:#dbeae1;border-radius:10px;}
-QScrollArea{border:0;} QCheckBox{padding:6px;}'''
+STYLE="""QWidget{font-family:"Microsoft YaHei UI","Noto Sans CJK SC",sans-serif;font-size:14px;color:#242a35;background:#f7f8fa;}
+QMainWindow{background:#f7f8fa;} QLabel#heading{font-size:22px;font-weight:600;} QLabel#muted{color:#707888;}
+QPushButton,QToolButton{background:#fff;border:1px solid #dce0e6;border-radius:6px;padding:7px 12px;min-height:18px;}
+QPushButton:hover,QToolButton:hover{background:#edf2fc;border-color:#9bb7ef;} QPushButton:pressed,QToolButton:pressed{background:#cdddfb;border-color:#4479e2;}
+QPushButton:focus,QToolButton:focus{border:2px solid #4479e2;padding:6px 11px;} QPushButton:disabled{color:#a0a6af;background:#f0f1f3;}
+QPushButton[role="primary"]{background:#3370ff;color:white;border-color:#3370ff;} QPushButton[role="primary"]:hover{background:#5085ff;} QPushButton[role="primary"]:pressed{background:#245bdb;}
+QPushButton[role="danger"]{color:#c33434;border-color:#efc5c5;} QPushButton[role="danger"]:hover{background:#fff0f0;} QPushButton[role="danger"]:pressed{background:#fbdada;}
+QLineEdit,QTextEdit,QPlainTextEdit,QComboBox,QTableWidget,QTableView,QListWidget{background:#fff;border:1px solid #e0e3e9;border-radius:6px;padding:5px;selection-background-color:#dce8ff;selection-color:#1d3d7a;}
+QLineEdit:hover,QComboBox:hover{border-color:#a8bde3;} QLineEdit:focus,QTextEdit:focus,QPlainTextEdit:focus,QComboBox:focus{border-color:#3370ff;}
+QLineEdit[invalid="true"],QComboBox[invalid="true"]{border-color:#d74444;background:#fff7f7;}
+QHeaderView::section{background:#f1f3f6;padding:8px;border:0;border-bottom:1px solid #e3e6ec;color:#677080;}
+QTableView{gridline-color:#edf0f4;alternate-background-color:#fafbfc;} QTableView::item:hover{background:#f0f5ff;} QTableView::item:focus{border:1px solid #6697ed;}
+QListWidget::item{padding:11px 12px;margin:2px 4px;border-radius:6px;} QListWidget::item:hover{background:#edf1f8;} QListWidget::item:selected{background:#e3edff;color:#245bdb;} QListWidget::item:pressed{background:#cddfff;}
+QTabBar::tab{padding:9px 14px;} QTabBar::tab:hover{background:#eef3ff;} QTabBar::tab:selected{color:#245bdb;border-bottom:2px solid #3370ff;} QTabBar::tab:focus{background:#e3edff;}
+QMenu{background:white;border:1px solid #dce0e6;padding:4px;} QMenu::item{padding:8px 18px;} QMenu::item:selected{background:#e8f0ff;} QMenu::item:pressed{background:#d4e3ff;}
+QComboBox QAbstractItemView::item:hover{background:#edf3ff;} QComboBox QAbstractItemView::item:selected{background:#dce8ff;}
+QScrollArea{border:0;} QScrollBar:vertical{width:10px;background:transparent;} QScrollBar::handle:vertical{background:#c9cfd9;border-radius:4px;min-height:26px;} QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}
+QCheckBox{padding:4px;} QCheckBox:hover{color:#245bdb;} QCheckBox:focus{outline:1px solid #7da4ee;} QWidget#toast{background:#fff;border:1px solid #d7dfea;border-radius:8px;} QWidget#toast[error="true"]{border-color:#e5aaaa;}
+QLabel[error="true"]{color:#c33434;}"""
 
 def label(text,heading=False):
-    w=QLabel(text);w.setWordWrap(True)
+    w=selectable(text)
     if heading:w.setObjectName('heading')
     return w
 
 def button(text,fn):
-    b=QPushButton(text);b.clicked.connect(fn);return b
+    b=FeedbackButton(text);b.setObjectName('action:'+text);b.clicked.connect(fn)
+    if text in ('新增','保存','保存设置','按三档规则推荐','保存修订版'):b.setProperty('role','primary')
+    elif text in ('删除','清空曲线'):b.setProperty('role','danger')
+    return b
 
-def message(parent,text):QMessageBox.information(parent,'图书带货工作台',str(text))
+def message(parent,text):toast(parent,str(text))
 
 def document(parent,title,value):
     d=QDialog(parent);d.setWindowTitle(title);d.resize(900,740);layout=QVBoxLayout(d)
-    t=QTextEdit();t.setReadOnly(True);t.setPlainText(value if isinstance(value,str) else encode_pretty(value));layout.addWidget(t)
+    t=QTextEdit();t.setReadOnly(True);t.setMarkdown(value) if isinstance(value,str) else t.setPlainText(readable(value));layout.addWidget(t)
     layout.addWidget(button('关闭',d.accept));d.exec()
 
 def encode_pretty(value):return json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)
@@ -47,9 +65,7 @@ def cell(value):
     return str(value)
 
 def make_table(headers,rows):
-    table=QTableWidget(len(rows),len(headers));table.setHorizontalHeaderLabels(headers)
-    table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows);table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents);table.horizontalHeader().setStretchLastSection(True)
+    table=DataTable(len(rows),len(headers));table.setHorizontalHeaderLabels(headers)
     for i,row in enumerate(rows):
         for j,v in enumerate(row):table.setItem(i,j,QTableWidgetItem(cell(v)))
     return table
@@ -104,7 +120,7 @@ class OCRReviewDialog(QDialog):
 class Editor(QDialog):
     def __init__(self,store,table,record=None,parent=None,initial=None):
         super().__init__(parent);self.store=store;self.table=table;self.record=dict(record or {});self.fields={};self.worker=None
-        self.kinds={key:kind for key,_,kind,_ in SCHEMA[table][1]};self.relation_hints={};self.attachment_labels={};self.restore_notices=[]
+        self.errors={};self.kinds={key:kind for key,_,kind,_ in SCHEMA[table][1]};self.relation_hints={};self.attachment_labels={};self.restore_notices=[]
         self.revision_of=record['id'] if record and table in ('data_snapshots','advertising_records') else None
         self.read_only=False
         self.draft_key='draft:'+table+':'+str(self.record.get('id','new'))
@@ -118,8 +134,8 @@ class Editor(QDialog):
         note_key='notes' if table=='data_snapshots' else 'other_metrics' if table=='advertising_records' else None
         self.note_key=note_key
         self.business_notes,self.audit_notes=split_notes(self.record.get(note_key)) if note_key else ('',[])
-        self.setWindowTitle(('编辑快照 · 另存修订版' if self.revision_of else '编辑')+' · '+SCHEMA[table][0]);self.resize(820,min(900,QApplication.primaryScreen().availableGeometry().height()-70))
-        outer=QVBoxLayout(self);scroll=QScrollArea();scroll.setWidgetResizable(True);body=QWidget();self.form=QFormLayout(body);scroll.setWidget(body);outer.addWidget(scroll)
+        self.setWindowTitle(('编辑快照 · 另存修订版' if self.revision_of else '编辑')+' · '+SCHEMA[table][0]);self.resize(820,min(120+sum(260 if f[2]=='curve' else 138 if f[2]=='long' else 60 for f in SCHEMA[table][1] if f[0]!='ocr_text'),900,QApplication.primaryScreen().availableGeometry().height()-70))
+        outer=QVBoxLayout(self);scroll=QScrollArea();scroll.setWidgetResizable(True);body=QWidget();self.form=QFormLayout(body);self.form.setAlignment(Qt.AlignmentFlag.AlignTop);self.form.setVerticalSpacing(5);scroll.setWidget(body);outer.addWidget(scroll)
         for key,title,kind,required in SCHEMA[table][1]:
             if key=='ocr_text':continue
             value=self.record.get(key)
@@ -150,7 +166,7 @@ class Editor(QDialog):
             if isinstance(kind,str) and kind in SCHEMA:
                 wrapper=QWidget();row=QHBoxLayout(wrapper);row.setContentsMargins(0,0,0,0);row.addWidget(w,1)
                 row.addWidget(button({'books':'新建图书','product_links':'新增商品链接','video_tests':'新增视频'}[kind],lambda checked=False,k=key:self.create_related(k)))
-                self.form.addRow(title+(' *' if required else ''),wrapper)
+                self.form.addRow(title+('（必填）' if required else ''),wrapper)
                 hint=label('');self.relation_hints[key]=hint;self.form.addRow('',hint);self.update_relation_hint(key)
             elif kind in ('image','file'):
                 wrapper=QWidget();row=QHBoxLayout(wrapper);row.setContentsMargins(0,0,0,0)
@@ -159,7 +175,9 @@ class Editor(QDialog):
                 row.addWidget(button('选择附件',lambda checked=False,k=key:self.pick(k)))
                 if kind=='image':row.addWidget(button('查看原图',lambda checked=False,k=key:self.open_attachment(k)))
                 row.addWidget(button('移除',lambda checked=False,k=key:self.remove_attachment(k)));self.form.addRow(title,wrapper)
-            else:self.form.addRow(('销量走势图' if kind=='curve' else title)+(' *' if required else ''),w)
+            else:self.form.addRow(('销量走势图' if kind=='curve' else title)+('（必填）' if required else ''),w)
+            error=label('');error.setProperty('error',True);error.setFixedHeight(16);error.setStyleSheet('font-size:12px');self.errors[key]=error;self.form.addRow('',error)
+            if isinstance(w,QLineEdit):w.returnPressed.connect(self.save)
             if key=='creators':
                 self.creator_scope=QComboBox();self.creator_scope.addItems(['已确认与本次统计周期一致','页面概览，统计周期待确认'])
                 self.creator_scope.setCurrentIndex(int(scope_unknown(self.record.get('notes'))));self.form.addRow('带货人数统计范围',self.creator_scope)
@@ -175,8 +193,10 @@ class Editor(QDialog):
         for w in self.fields.values():
             signal=(w.editTextChanged if w.isEditable() else w.currentIndexChanged) if isinstance(w,QComboBox) else w.toggled if isinstance(w,QCheckBox) else w.textChanged
             signal.connect(lambda *args:self.draft_timer.start(500))
+            signal.connect(lambda *args,field=w:self.clear_field_error(field))
         if hasattr(self,'creator_scope'):self.creator_scope.currentIndexChanged.connect(lambda *args:self.draft_timer.start(500))
-        buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(True)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(True);buttons.button(QDialogButtonBox.StandardButton.Save).setProperty('role','primary')
+        for b in self.findChildren(QPushButton):b.setAutoDefault(False);b.setDefault(False)
         for key in ('cover','screenshot','media'):
             if key in self.fields and self.fields[key].text():self.restore_attachment(key)
         if self.restore_notices:self.notice.setText('\n'.join(self.restore_notices))
@@ -319,7 +339,41 @@ class Editor(QDialog):
         if not self.read_only:
             values=self.values();values['_relation_text']={key:w.currentText() for key,w in self.fields.items() if isinstance(w,QComboBox) and w.isEditable() and self.relation_value(key) is None}
             self.store.settings({self.draft_key:encode(values)})
+    def clear_field_error(self,field):
+        field.setProperty('invalid',False);field.style().unpolish(field);field.style().polish(field)
+        for key,w in self.fields.items():
+            if w is field and key in self.errors:self.errors[key].setText('')
+    def form_errors(self):
+        errors={};values=self.values()
+        for key,title,kind,required in SCHEMA[self.table][1]:
+            if key=='ocr_text':continue
+            value=values.get(key)
+            if required and (value is None or value==''):
+                if kind=='product_links' and self.pasted_url(key):continue
+                errors[key]='请填写'+title;continue
+            if value is None or value=='':continue
+            if kind in ('number','percent','integer'):
+                try:
+                    n=float(value)
+                    if not math.isfinite(n) or n<0 or (kind=='integer' and not n.is_integer()) or (kind=='percent' and n>100):raise ValueError()
+                except (ValueError,TypeError):errors[key]='请填写有效非负'+('整数' if kind=='integer' else '数值')
+            elif kind=='date':
+                try:date.fromisoformat(value)
+                except (ValueError,TypeError):errors[key]='日期格式为 YYYY-MM-DD'
+        if self.table=='data_snapshots':
+            if not values.get('confirmed'):errors['confirmed']='核对数据后请勾选确认'
+            try:
+                if values.get('creators') not in ('',None) and values.get('sellers') not in ('',None) and float(values['sellers'])>float(values['creators']):errors['sellers']='出单人数不能超过带货人数'
+            except (ValueError,TypeError):pass
+        for key,w in self.fields.items():
+            invalid=key in errors;w.setProperty('invalid',invalid);w.style().unpolish(w);w.style().polish(w)
+            if key in self.errors:self.errors[key].setText(errors.get(key,''))
+        if errors:
+            first=self.fields[next(iter(errors))];first.setFocus();self.notice.setText('请修正标记处，已填写内容和草稿均保留。')
+        return errors
     def save(self):
+        if hasattr(self,'saved_id'):return
+        if self.form_errors():self.save_draft();return
         if self.worker and self.worker.isRunning():self.notice.setText('识别进行中，请先核对识别结果再保存。');return
         try:
             for key,kind in self.kinds.items():
@@ -333,30 +387,33 @@ class Editor(QDialog):
             if self.revision_of:
                 key=self.note_key;values[key]=combine_notes(values.get(key),[f'【快照修订】修订自记录#{self.revision_of}，原记录保留。'])
             self.saved_id=self.store.save(self.table,values,None if self.revision_of else self.record.get('id'));self.draft_timer.stop()
-            self.store.settings({self.draft_key:'{}'});self.accept()
+            self.store.settings({self.draft_key:'{}'});self.buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(False);self.accept()
         except Exception as exc:self.notice.setText(str(exc))
     def reject(self):
+        if hasattr(self,'saved_id'):return
         if self.worker and self.worker.isRunning():self.notice.setText('识别进行中，请等待结束后关闭');return
         self.draft_timer.stop();self.save_draft();super().reject()
     def closeEvent(self,event):
         if self.worker and self.worker.isRunning():event.ignore()
-        else:self.draft_timer.stop();self.save_draft();event.accept()
+        else:self.reject();event.ignore()
 
 class MainWindow(QMainWindow):
     def __init__(self,store):
-        super().__init__();self.store=store;self.runtime_key='';self.worker=None;self.ai_id=None;self.quitting=False
+        super().__init__();install_policy();self.store=store;self.runtime_key='';self.worker=None;self.ai_id=None;self.quitting=False;self.view_states={};self.view_key=None;self._crud_update=None;self.backup_worker=None;self.pending_quit=False
+        QApplication.instance().setProperty('reducedMotion',store.setting('reduced_motion','0')=='1');self.monitor=MonitorController(store,self);self.monitor.updated.connect(self.finish_pending_close)
         self.setWindowTitle('图书带货智能选品工作台 · V'+APP_VERSION);self.resize(1550,950);self.setMinimumSize(1100,700)
         self.setStyleSheet(STYLE);root=QSplitter();self.setCentralWidget(root)
-        self.nav=QListWidget();self.nav.addItems(['工作台首页','01 图书数据库','02 数据采集中心','03 选品分析引擎','04 多商品对比','05 AI选品顾问','06 视频投放与复盘','07 历史复盘','设置与备份']);root.addWidget(self.nav)
-        self.center=QWidget();self.layout=QVBoxLayout(self.center);self.layout.setContentsMargins(24,24,24,24);root.addWidget(self.center)
+        self.nav=QListWidget();self.nav.addItems(['工作台首页','01 图书数据库','02 数据采集中心','03 选品分析引擎','04 多商品对比','05 AI选品顾问','06 视频投放与复盘','07 历史复盘','设置与备份','08 抖音账号监测']);self.nav.setMinimumWidth(160);self.nav.setMaximumWidth(230);root.addWidget(self.nav)
+        self.center=QWidget();self.layout=QVBoxLayout(self.center);self.layout.setContentsMargins(20,20,20,20);self.layout.setSpacing(12);root.addWidget(self.center)
         assistant=QWidget();ai=QVBoxLayout(assistant);ai.setContentsMargins(16,24,16,24);ai.addWidget(label('AI 选品顾问',True));ai.addWidget(label('三档推荐 · 简短理由'))
         self.ai_task=QComboBox();self.ai_task.addItems(['三档选品推荐','简短问答','视频五日复盘','同类商品比较','15天数据变化分析','历史成功与失败案例分析']);ai.addWidget(self.ai_task)
         self.ai_scope=QComboBox();self.ai_scope.addItem('全部图书历史',None);ai.addWidget(self.ai_scope)
         self.question=QTextEdit();self.question.setPlaceholderText('输入问题；发送前展示完整上下文。AI不能操作数据或投放。');self.question.setMaximumHeight(120);ai.addWidget(self.question)
         self.ai_send=button('核对上下文并发送',self.ask_ai);ai.addWidget(self.ai_send)
-        self.ai_output=QTextEdit();self.ai_output.setReadOnly(True);ai.addWidget(self.ai_output,1)
+        self.ai_output=QTextEdit();self.ai_output.setReadOnly(True);self.ai_output.setPlaceholderText('选择图书后点击推荐，档次与简短理由会显示在这里。');ai.addWidget(self.ai_output,1)
         self.ai_expand=button('展开完整回答',self.toggle_ai_answer);self.ai_expand.hide();ai.addWidget(self.ai_expand)
-        self.ai_task.currentTextChanged.connect(self.configure_ai_task);self.configure_ai_task();root.addWidget(assistant);root.setSizes([205,1000,345])
+        self.ai_task.currentTextChanged.connect(self.configure_ai_task);self.configure_ai_task();assistant.setMinimumWidth(260);root.addWidget(assistant);root.setStretchFactor(1,1);root.setSizes([205,1000,345])
+        self.content_effect=QGraphicsOpacityEffect(self.center);self.center.setGraphicsEffect(self.content_effect);self.page_fade=QPropertyAnimation(self.content_effect,b'opacity',self);self.page_fade.setDuration(DURATION)
         self.nav.currentRowChanged.connect(self.refresh);self.nav.setCurrentRow(0)
         pix=QPixmap(64,64);pix.fill(QColor('#567e6a'));p=QPainter(pix);p.setPen(QColor('white'));p.drawText(pix.rect(),Qt.AlignmentFlag.AlignCenter,'书');p.end();self.setWindowIcon(QIcon(pix))
         self.tray=QSystemTrayIcon(self.windowIcon(),self);menu=QMenu();menu.addAction('打开工作台',self.showNormal);menu.addAction('退出',self.quit_app);self.tray.setContextMenu(menu)
@@ -365,29 +422,80 @@ class MainWindow(QMainWindow):
         self.timer=QTimer(self);self.timer.timeout.connect(self.maintain);self.timer.start(60000);QTimer.singleShot(100,self.maintain)
     def guarded(self,fn):
         try:return fn()
-        except Exception as exc:message(self,exc)
-    def clear(self):
+        except Exception as exc:toast(self,exc,error=True)
+    def remember_view(self):
+        if self.view_key is None:return
+        state={}
+        for i,w in enumerate(self.center.findChildren(QWidget)):
+            key=w.objectName() or f'{type(w).__name__}:{i}'
+            if w is QApplication.focusWidget():state['_focus']=key
+            if isinstance(w,QComboBox):state[key]=('combo',w.currentText())
+            elif isinstance(w,QLineEdit) and not isinstance(w.parent(),QComboBox):state[key]=('text',w.text())
+            elif isinstance(w,QTextEdit):state[key]=('long',w.toPlainText())
+            elif isinstance(w,QCheckBox):state[key]=('check',w.isChecked())
+            elif isinstance(w,QScrollArea):state[key]=('scroll',w.verticalScrollBar().value())
+            elif isinstance(w,DataTable):state[key]=('table_view',(w.verticalScrollBar().value(),w.horizontalScrollBar().value(),w.currentRow()))
+        if getattr(self,'table',None) and self.table.parent() and self.center.isAncestorOf(self.table):
+            state['_table']={'vertical':self.table.verticalScrollBar().value(),'horizontal':self.table.horizontalScrollBar().value(),'selected':self.visible[self.table.currentRow()]['id'] if hasattr(self,'visible') and 0<=self.table.currentRow()<len(self.visible) else None,'page':getattr(self,'page_number',0)}
+        if self.view_key=='7':state['_history_page']=getattr(self,'history_page_number',0)
+        self.view_states[self.view_key]=state
+    def restore_view(self):
+        state=self.view_states.get(self.view_key,{});restore_focus=None
+        for i,w in enumerate(self.center.findChildren(QWidget)):
+            key=w.objectName() or f'{type(w).__name__}:{i}'
+            if key==state.get('_focus'):restore_focus=w
+            if key not in state:continue
+            kind,value=state[key];block=QSignalBlocker(w)
+            if kind=='combo' and isinstance(w,QComboBox):w.setCurrentText(value)
+            elif kind=='text' and isinstance(w,QLineEdit):w.setText(value)
+            elif kind=='long' and isinstance(w,QTextEdit):w.setPlainText(value)
+            elif kind=='check' and isinstance(w,QCheckBox):w.setChecked(value)
+            elif kind=='scroll' and isinstance(w,QScrollArea):w.verticalScrollBar().setValue(value)
+            elif kind=='table_view' and isinstance(w,DataTable):
+                def restore_table(widget=w,position=value):
+                    try:widget.selectRow(position[2]);widget.verticalScrollBar().setValue(position[0]);widget.horizontalScrollBar().setValue(position[1])
+                    except RuntimeError:pass
+                QTimer.singleShot(0,restore_table)
+            del block
+        if self._crud_update:self._crud_update(reset=False)
+        if restore_focus:restore_focus.setFocus(Qt.FocusReason.OtherFocusReason)
+        table=getattr(self,'table',None);saved=state.get('_table',{});view_key=self.view_key
+        def restore_scroll():
+            if table and self.view_key==view_key and self.table is table:
+                for i,r in enumerate(self.visible):
+                    if r['id']==saved.get('selected'):table.selectRow(i);break
+                table.verticalScrollBar().setValue(saved.get('vertical',0));table.horizontalScrollBar().setValue(saved.get('horizontal',0))
+        QTimer.singleShot(0,restore_scroll)
+    def clear(self,view_key=None):
+        self.remember_view();self._crud_update=None
+        if hasattr(self,'search_timer'):self.search_timer.stop()
         while self.layout.count():
             item=self.layout.takeAt(0)
-            if item.widget():item.widget().deleteLater()
+            widget=item.widget()
+            if widget:widget.setParent(None);widget.deleteLater()
+        self.table=None;self.visible=[]
+        if view_key is not None:self.view_key=view_key
     def refresh(self,*args):
         scope=self.ai_scope.currentData();self.ai_scope.clear();self.ai_scope.addItem('全部图书历史',None)
         for b in self.store.rows('books'):self.ai_scope.addItem(f'仅图书#{b["id"]} '+b['name'],b['id'])
         self.ai_scope.setCurrentIndex(max(0,self.ai_scope.findData(scope)))
-        self.clear();index=self.nav.currentRow();self.layout.addWidget(label(self.nav.currentItem().text() if self.nav.currentItem() else '工作台',True))
+        self.center.setUpdatesEnabled(False);index=self.nav.currentRow();self.clear(str(index));self.layout.addWidget(label(self.nav.currentItem().text() if self.nav.currentItem() else '工作台',True))
         self.last_error=None
         try:
-            [self.home,self.books,self.collection,self.products,self.comparison,self.ai_page,self.videos,self.history,self.settings_page][max(0,index)]()
-            effect=QGraphicsOpacityEffect(self.center);self.center.setGraphicsEffect(effect)
-            self.fade=QPropertyAnimation(effect,b'opacity',self);self.fade.setDuration(140);self.fade.setStartValue(.65);self.fade.setEndValue(1);self.fade.start()
-        except Exception as exc:self.last_error=str(exc);self.layout.addWidget(label(str(exc)))
+            [self.home,self.books,self.collection,self.products,self.comparison,self.ai_page,self.videos,self.history,self.settings_page,self.monitor_page][max(0,index)]()
+            self.restore_view()
+        except Exception as exc:self.last_error=str(exc);self.layout.addWidget(label(str(exc)));self.toolbar([('重试',self.refresh)])
+        finally:
+            self.center.setUpdatesEnabled(True)
+            self.page_fade.stop();self.content_effect.setOpacity(1)
+            if not reduced_motion():self.page_fade.setStartValue(.92);self.page_fade.setEndValue(1);self.page_fade.start()
     def toolbar(self,actions):
         w=QWidget();row=QHBoxLayout(w);row.setContentsMargins(0,0,0,0)
         for title,fn in actions:row.addWidget(button(title,lambda checked=False,f=fn:self.guarded(f)))
         row.addStretch();self.layout.addWidget(w)
     def editor(self,table,record=None):
         d=Editor(self.store,table,record,self)
-        if d.exec():self.refresh()
+        if d.exec():self.refresh();toast(self,'已保存，资料已更新')
     def selected(self,table=None):
         i=self.table.currentRow()
         if i<0:raise ValueError('请先选择一行')
@@ -396,26 +504,48 @@ class MainWindow(QMainWindow):
         self.table_name=table
         recovery=[('回收站',lambda:self.recycle_bin(table))] if table in ('data_snapshots','advertising_records') else []
         self.toolbar([('新增',lambda:self.editor(table)),('查看／编辑',lambda:self.editor(table,self.selected())),('删除',lambda:self.remove(table)),('历史',lambda:document(self,'修改历史',[r for r in self.store.rows('entity_history') if r['table_name']==table and r['entity_id']==self.selected()['id']]))]+list(extra)+recovery)
-        filters=QWidget();row=QHBoxLayout(filters);self.search=QLineEdit();self.search.setPlaceholderText('搜索名称、链接、编号、备注…');row.addWidget(self.search)
-        self.category=QComboBox();self.category.addItem('全部分类');self.category.addItems(sorted({r['category'] for r in self.store.rows('books') if r['category']}));row.addWidget(self.category);self.layout.addWidget(filters)
-        self.table=make_table([],[]);self.layout.addWidget(self.table,1)
-        def update():
-            values=self.store.rows(table);self.visible=[]
-            for r in values:
-                b=r if table=='books' else self.store.get('books',r['book_id']) if table=='product_links' else self.store.get('books',self.store.get('product_links',r['product_id'])['book_id']) if table in ('video_tests','data_snapshots') else self.store.get('books',self.store.get('product_links',self.store.get('video_tests',r['video_id'])['product_id'])['book_id'])
-                if self.category.currentIndex()>0 and b['category']!=self.category.currentText():continue
-                if self.search.text().casefold() not in encode([r,b]).casefold():continue
-                self.visible.append(r)
-            cols=[('id','ID'),*[(k,t) for k,t,kind,_ in SCHEMA[table][1] if kind not in ('long','curve','image','file')]]
-            self.table.setColumnCount(len(cols));self.table.setRowCount(len(self.visible));self.table.setHorizontalHeaderLabels([x[1] for x in cols])
-            for i,r in enumerate(self.visible):
-                for j,(key,_) in enumerate(cols):self.table.setItem(i,j,QTableWidgetItem(cell(r.get(key))))
-        self.search.textChanged.connect(update);self.category.currentIndexChanged.connect(update);update()
-        self.table.cellDoubleClicked.connect(lambda *_:self.guarded(lambda:self.editor(table,self.selected())))
+        filters=QWidget();row=QHBoxLayout(filters);row.setContentsMargins(0,0,0,0)
+        search=QLineEdit();search.setObjectName('recordSearch');search.setPlaceholderText('搜索名称、链接、编号、备注…');search.setClearButtonEnabled(True);row.addWidget(search);self.search=search
+        category=QComboBox();category.setObjectName('recordCategory');category.addItem('全部分类');category.addItems(sorted({r['category'] for r in self.store.rows('books') if r['category']}));row.addWidget(category);self.category=category;self.layout.addWidget(filters)
+        view=make_table([],[]);self.table=view;self.layout.addWidget(view,1)
+        empty=label('');empty.setObjectName('tableStatus');self.layout.addWidget(empty)
+        navigation=QWidget();line=QHBoxLayout(navigation);line.setContentsMargins(0,0,0,0)
+        previous=button('上一页',lambda:change_page(-1));following=button('下一页',lambda:change_page(1));counter=label('');line.addWidget(counter);line.addStretch();line.addWidget(previous);line.addWidget(following);self.layout.addWidget(navigation)
+        self.page_number=self.view_states.get(self.view_key,{}).get('_table',{}).get('page',0);self.visible=[]
+        cols=[('id','ID'),*[(k,t) for k,t,kind,_ in SCHEMA[table][1] if kind not in ('long','curve','image','file')]]
+        view.setColumnCount(len(cols)+1);view.setHorizontalHeaderLabels([x[1] for x in cols]+['操作']);view.setColumnWidth(0,70)
+        def update(reset=True):
+            if self.table is not view:return
+            if reset:self.page_number=0
+            old_id=self.visible[view.currentRow()]['id'] if 0<=view.currentRow()<len(self.visible) else None
+            old_scroll=view.verticalScrollBar().value();old_horizontal=view.horizontalScrollBar().value()
+            try:
+                rows,total=self.store.page(table,search.text(),category.currentText() if category.currentIndex()>0 else '',self.page_number,50)
+                if not rows and total and self.page_number:
+                    self.page_number=(total-1)//50;rows,total=self.store.page(table,search.text(),category.currentText() if category.currentIndex()>0 else '',self.page_number,50)
+            except Exception as exc:
+                empty.setText('暂时无法加载，原有数据已保留。'+str(exc));return
+            self.statusBar().clearMessage();self.visible=rows;view.setUpdatesEnabled(False);view.setRowCount(len(rows))
+            for i,r in enumerate(rows):
+                for j,(key,_) in enumerate(cols):view.setItem(i,j,QTableWidgetItem(cell(r.get(key))))
+                view.setItem(i,len(cols),QTableWidgetItem(''))
+            view.setUpdatesEnabled(True);view.verticalScrollBar().setValue(old_scroll);view.horizontalScrollBar().setValue(old_horizontal)
+            for i,r in enumerate(rows):
+                if r['id']==old_id:view.selectRow(i);break
+            previous.setEnabled(self.page_number>0);following.setEnabled((self.page_number+1)*50<total)
+            counter.setText(f'共 {total} 条 · 第 {self.page_number+1}/{max(1,(total+49)//50)} 页 · 每页 50 条')
+            empty.setText('没有符合条件的记录，可调整搜索或筛选。' if not rows and (search.text() or category.currentIndex()) else '暂无记录，点击“新增”开始。' if not rows else '')
+            empty.setVisible(not rows)
+        def change_page(delta):self.page_number+=delta;update(reset=False);view.verticalScrollBar().setValue(0)
+        timer=QTimer(view);timer.setSingleShot(True);timer.setInterval(200);timer.timeout.connect(update);self.search_timer=timer
+        search.textChanged.connect(lambda _:(timer.start(),self.statusBar().showMessage('正在筛选，已有数据保留显示')));category.currentIndexChanged.connect(lambda _:(timer.start(),self.statusBar().showMessage('正在筛选，已有数据保留显示')))
+        self._crud_update=update;update(reset=False);view.pin_actions(len(cols));view.editRequested.connect(lambda i:(view.selectRow(i),self.guarded(lambda:self.editor(table,self.selected()))))
+        view.cellDoubleClicked.connect(lambda *_:self.guarded(lambda:self.editor(table,self.selected())))
     def remove(self,table):
         r=self.selected()
         prompt='删除这条快照？将移入回收站，不再参与最新数据、对比、分档和提醒；可从回收站恢复。' if table in ('data_snapshots','advertising_records') else '确认删除档案？仍有关联历史、投放或复盘记录的图书／商品档案不能直接删除。'
-        if QMessageBox.question(self,'删除记录',prompt)==QMessageBox.StandardButton.Yes:self.store.delete(table,r['id']);self.refresh_crud(table)
+        if confirm(self,'删除记录',prompt,'移入回收站' if table in ('data_snapshots','advertising_records') else '删除'):
+            self.store.delete(table,r['id']);self.refresh_crud(table);toast(self,'已移入回收站，可随时恢复' if table in ('data_snapshots','advertising_records') else '已删除')
     def refresh_crud(self,table):
         if table=='advertising_records' and self.nav.currentRow()==6:self.ad_records()
         elif table=='product_links' and self.nav.currentRow()==1:self.product_list()
@@ -437,12 +567,12 @@ class MainWindow(QMainWindow):
     def books(self):
         self.crud('books');self.toolbar([('管理商品链接',lambda:self.product_list())])
     def product_list(self):
-        self.clear();self.layout.addWidget(label('商品链接 · 一本书可对应多个商品',True));self.crud('product_links')
+        self.clear(str(self.nav.currentRow())+':products');self.layout.addWidget(label('商品链接 · 一本书可对应多个商品',True));self.crud('product_links');self.restore_view()
     def collection(self):
         self.layout.addWidget(label('90天滚动快照 · 每个商品链接独立15天更新。原图、OCR结果与人工核对数据一同保存。'))
         self.crud('data_snapshots',[('两次快照对比',lambda:document(self,'快照变化（不是15天销量）',self.store.snapshot_diff(self.selected()['product_id'])))])
     def products(self):
-        self.layout.addWidget(label('三档按固定规则计算，门槛可在设置中调整；数据或同类样本不足先补齐，不硬分档。'))
+        self.layout.addWidget(label('单本书即可按固定门槛分为三档；同类比较只作参考。核心数据缺失先补齐，曲线不足可保守试测。'))
         self.crud('product_links',[('三档简明推荐',lambda:document(self,'三档选品推荐',render_grades(self.store.grading_results()))),('分档规则',lambda:document(self,'三档规则',rules_text(self.store.grading_rules()))),('分析结果与曲线',self.show_analysis)])
     def show_analysis(self):
         id=self.selected()['id'];p=self.store.get('product_links',id);document(self,'选品分析',render_grades([{'商品ID':id,'图书':self.store.get('books',p['book_id'])['name'],'分析':self.store.analyze(id)}]));s=self.store.latest('data_snapshots','product_id',id)
@@ -474,7 +604,7 @@ class MainWindow(QMainWindow):
         tasks={r['video_id']:r for r in self.store.db.execute('SELECT * FROM video_review_tasks')}
         self.layout.addWidget(make_table(['视频','发布日期','广告提交','实际开始','原五日日期','当前复盘日期','剩余天数','已复盘'],[[v['code'],v['published'],v['submitted'],v['ad_started'],tasks[v['id']]['original_due'],tasks[v['id']]['due'],(date.fromisoformat(tasks[v['id']]['due'])-date.today()).days,bool(tasks[v['id']]['completed'])] for v in self.store.rows('video_tests')]))
     def ad_records(self):
-        self.clear();self.layout.addWidget(label('广告数据采集 · 实际GMV与后台GMV独立',True));self.crud('advertising_records')
+        self.clear(str(self.nav.currentRow())+':ads');self.layout.addWidget(label('广告数据采集 · 实际GMV与后台GMV独立',True));self.crud('advertising_records');self.restore_view()
     def defer_video(self,n):
         due=self.store.defer(self.selected()['id'],n);message(self,'下次提醒：'+due+'。原复盘历史保留。');self.refresh()
     def video_review(self):
@@ -492,18 +622,28 @@ class MainWindow(QMainWindow):
         summary['已提交无有效消耗']=[r['视频']['code'] for r in records if r['视频']['submitted'] and not r['广告'].get('spend')]
         l.addWidget(label(encode_pretty(summary)+'\n特征与成交的关联不构成因果；未知消耗不等于确定零消耗。'));d.exec()
     def history(self):
-        self.layout.addWidget(label('档案分类由经营者核定，不凭单次数据自动贴成功／失败标签。每次复盘、延后、快照、AI建议保留。'))
-        self.history_kind=QComboBox();self.history_kind.addItems(['视频复盘报告','商品分析历史','AI分析历史','图书／商品历史分组','视频素材历史分组']);self.layout.addWidget(self.history_kind)
-        self.history_table=make_table([],[]);self.layout.addWidget(self.history_table,1)
-        def update():
+        self.layout.addWidget(label('按图书和视频保留每次复盘、快照与建议，双击记录查看详情。'))
+        self.history_kind=QComboBox();self.history_kind.setObjectName('historyKind');self.history_kind.addItems(['视频复盘报告','商品分析历史','AI分析历史','图书／商品历史分组','视频素材历史分组']);self.layout.addWidget(self.history_kind)
+        state=self.view_states.get(self.view_key,{})
+        if state.get('historyKind'):self.history_kind.setCurrentText(state['historyKind'][1])
+        self.history_page_number=state.get('_history_page',0)
+        self.history_table=make_table(['时间','内容（双击查看全部）'],[]);self.layout.addWidget(self.history_table,1)
+        footer=QWidget();row=QHBoxLayout(footer);row.setContentsMargins(0,0,0,0);count=label('');row.addWidget(count);row.addStretch()
+        previous=button('上一页',lambda:change(-1));following=button('下一页',lambda:change(1));row.addWidget(previous);row.addWidget(following);self.layout.addWidget(footer)
+        def update(reset=True):
+            if reset:self.history_page_number=0
             index=self.history_kind.currentIndex()
-            if index<3:self.history_rows=self.store.rows(['video_review_reports','product_analyses','ai_analysis_history'][index])
-            elif index==3:self.history_rows=[{'图书':self.store.get('books',p['book_id']),'商品':p,'分析':self.store.analyze(p['id'])} for p in self.store.rows('product_links')]
-            else:self.history_rows=[{'视频':v,'最近广告':self.store.latest('advertising_records','video_id',v['id'])} for v in self.store.rows('video_tests')]
-            self.history_table.setColumnCount(2);self.history_table.setHorizontalHeaderLabels(['记录','内容（双击查看全部）']);self.history_table.setRowCount(len(self.history_rows))
+            if index<3:self.history_rows,total=self.store.history_page(['video_review_reports','product_analyses','ai_analysis_history'][index],self.history_page_number)
+            else:
+                if index==3:all_rows=[{'图书':self.store.get('books',p['book_id']),'商品':p,'分析':self.store.analyze(p['id'])} for p in self.store.rows('product_links')]
+                else:all_rows=[{'视频':v,'最近广告':self.store.latest('advertising_records','video_id',v['id'])} for v in self.store.rows('video_tests')]
+                total=len(all_rows);self.history_rows=all_rows[self.history_page_number*50:(self.history_page_number+1)*50]
+            self.history_table.setRowCount(len(self.history_rows))
             for i,r in enumerate(self.history_rows):
-                self.history_table.setItem(i,0,QTableWidgetItem(str(r.get('created',r.get('id',i+1)))));self.history_table.setItem(i,1,QTableWidgetItem(encode(r)[:300]))
-        self.history_kind.currentIndexChanged.connect(update);self.history_table.cellDoubleClicked.connect(lambda i,j:document(self,'完整历史',self.history_rows[i]));update()
+                self.history_table.setItem(i,0,QTableWidgetItem(str(r.get('created',r.get('id',i+1)))));self.history_table.setItem(i,1,QTableWidgetItem(clean_markdown(readable(r))[:300]))
+            count.setText(f'共 {total} 条 · 第 {self.history_page_number+1}/{max(1,(total+49)//50)} 页'+(' · 暂无记录' if not total else ''));previous.setEnabled(self.history_page_number>0);following.setEnabled((self.history_page_number+1)*50<total)
+        def change(n):self.history_page_number+=n;update(reset=False)
+        self.history_kind.currentIndexChanged.connect(update);self.history_table.cellDoubleClicked.connect(lambda i,j:document(self,'历史详情',self.history_rows[i]));update(reset=False)
         self.toolbar([('历史特征分组统计',self.history_summary)])
     def history_summary(self):
         groups={}
@@ -534,18 +674,20 @@ class MainWindow(QMainWindow):
             s=self.store.latest('data_snapshots','product_id',p['id'])
             ss.append({'商品':p['id'],'采集时间':s['collected'] if s else None,'趋势':self.store.analyze(p['id']).get('销量趋势'),'曲线':s['curve'] if s else None})
         document(self,'趋势概览；详细曲线见选品分析',ss)
+    def monitor_page(self):self.layout.addWidget(MonitorPanel(self.monitor,self),1)
     def settings_page(self):
         form_widget=QWidget();form=QFormLayout(form_widget);self.config={}
-        for k,title,default in [('api_base','DeepSeek官方API地址','https://api.deepseek.com'),('model','模型（获取后选择）',''),('min_spend','最低测试消耗（元，经营门槛）','100'),('min_orders','最低订单样本（经营门槛）','5'),('target_ratio','目标实际GMV/消耗（非利润率）','1'),('grade_min_peers','分档所需最少同类商品','5'),('grade_high_pct','较好指标超过同类百分比（默认60）','60'),('grade_low_pct','较弱指标低于同类百分比（默认25）','25')]:
+        for k,title,default in [('api_base','DeepSeek官方API地址','https://api.deepseek.com'),('model','模型（获取后选择）',''),('min_spend','最低测试消耗（元，经营门槛）','100'),('min_orders','最低订单样本（经营门槛）','5'),('target_ratio','目标实际GMV/消耗（非利润率）','1'),('grade_high_rate','优先档：出单率至少（%）','20'),('grade_high_sales','优先档：90天总销量至少','1000'),('grade_high_per_seller','优先档：出单人均销量至少','20'),('grade_high_sellers','优先档：出单人数至少','5'),('grade_low_rate','放弃参考：出单率低于（%）','5'),('grade_low_sales','放弃参考：90天总销量低于','100'),('grade_low_per_seller','放弃参考：出单人均销量低于','5'),('grade_min_peers','仅参考排名：最少同类商品数','5')]:
             w=QComboBox() if k=='model' else QLineEdit()
             if k=='model':w.setEditable(True);w.addItem(self.store.setting(k,default))
             else:w.setText(self.store.setting(k,default))
             form.addRow(title,w);self.config[k]=w
         self.key_input=QLineEdit();self.key_input.setEchoMode(QLineEdit.EchoMode.Password);self.key_input.setPlaceholderText('留空保留已有Key');form.addRow('API Key',self.key_input)
         self.persist=QCheckBox('保存到系统安全凭据库');self.persist.setChecked(sys.platform=='win32');form.addRow(self.persist)
+        self.reduce_motion=QCheckBox('减少动态效果');self.reduce_motion.setChecked(self.store.setting('reduced_motion','0')=='1');form.addRow(self.reduce_motion)
         self.background=QCheckBox('关闭后留在后台托盘');self.background.setChecked(self.store.setting('background','0')=='1');self.background.setEnabled(QSystemTrayIcon.isSystemTrayAvailable());form.addRow(self.background)
         self.autostart=QCheckBox('登录Windows后启动');self.autostart.setChecked(self.store.setting('autorun','0')=='1');self.autostart.setEnabled(sys.platform=='win32');form.addRow(self.autostart)
-        self.layout.addWidget(form_widget);self.toolbar([('获取模型',self.get_models),('保存设置',self.save_settings),('备份完整资料',self.backup),('恢复备份',self.restore)])
+        scroll=QScrollArea();scroll.setWidgetResizable(True);scroll.setWidget(form_widget);self.layout.addWidget(scroll);self.toolbar([('获取模型',self.get_models),('保存设置',self.save_settings),('备份完整资料',self.backup),('恢复备份',self.restore)])
         self.layout.addWidget(label('数据目录：'+str(self.store.root)+'\n点击保存即写入数据库。每日自动备份含数据库与附件，保留30份；不含API Key。\n门槛是可调整的经营规则，不是统计显著性。\nOCR需要Tesseract及chi_sim、eng模型，截图仅本地识别。'));self.layout.addStretch()
     def save_settings(self):
         values={k:w.currentText() if isinstance(w,QComboBox) else w.text().strip() for k,w in self.config.items()};endpoint(values['api_base'])
@@ -553,17 +695,17 @@ class MainWindow(QMainWindow):
             n=float(values[k])
             if not math.isfinite(n) or n<=0 or (k=='min_orders' and not n.is_integer()):raise ValueError('门槛必须是正数，订单应为整数')
             if k=='min_orders':values[k]=str(int(n))
-        validate_rules({'min_peers':values['grade_min_peers'],'high_pct':values['grade_high_pct'],'low_pct':values['grade_low_pct']})
+        validate_rules({k:values['grade_'+k] for k in DEFAULTS})
         key=self.key_input.text().strip()
         if key:
             if self.persist.isChecked():save_key(key)
             self.runtime_key=key
         if sys.platform=='win32':autorun(self.autostart.isChecked())
-        values.update(background=int(self.background.isChecked()),autorun=int(self.autostart.isChecked()));self.store.settings(values);self.key_input.clear();message(self,'设置已保存')
+        values.update(background=int(self.background.isChecked()),autorun=int(self.autostart.isChecked()),reduced_motion=int(self.reduce_motion.isChecked()));QApplication.instance().setProperty('reducedMotion',self.reduce_motion.isChecked());self.store.settings(values);self.key_input.clear();message(self,'设置已保存')
     def get_models(self):
         if self.worker and self.worker.isRunning():raise ValueError('请等待当前AI请求结束')
         self.worker=AIWorker(self.config['api_base'].text(),self.key_input.text().strip() or self.runtime_key or api_key(),parent=self)
-        self.worker.result.connect(self.got_models);self.worker.failed.connect(lambda t:message(self,t));self.worker.start()
+        self.worker.finished.connect(self.finish_pending_close);self.worker.result.connect(self.got_models);self.worker.failed.connect(lambda t:message(self,t));self.worker.start()
     def got_models(self,models):
         if self.nav.currentRow()!=8:return
         self.config['model'].clear();self.config['model'].addItems(models);message(self,'请选择模型并保存设置')
@@ -574,14 +716,15 @@ class MainWindow(QMainWindow):
         self.ai_send.setText('按三档规则推荐' if grading else '核对后发送给AI')
     def toggle_ai_answer(self):
         self.ai_expanded=not self.ai_expanded
-        self.ai_output.setPlainText(self.ai_full_answer if self.ai_expanded else self.ai_brief_answer)
+        self.ai_output.setPlainText(clean_markdown(self.ai_full_answer if self.ai_expanded else self.ai_brief_answer))
         self.ai_expand.setText('收起回答' if self.ai_expanded else '展开完整回答')
+        effect=QGraphicsOpacityEffect(self.ai_output);self.ai_output.setGraphicsEffect(effect);self.answer_fade=QPropertyAnimation(effect,b'opacity',self);self.answer_fade.setDuration(0 if reduced_motion() else DURATION);self.answer_fade.setStartValue(.94);self.answer_fade.setEndValue(1);self.answer_fade.start()
     def show_ai_answer(self,text,short=True):
         self.ai_full_answer=text;self.ai_expanded=False
         lines=[x.strip() for x in text.splitlines() if x.strip()]
         too_long=short and (len(text)>200 or len(lines)>4)
         self.ai_brief_answer=('\n'.join(lines[:2])[:180]+'\n（较长回复已折叠，可展开查看）') if too_long else text
-        self.ai_output.setPlainText(self.ai_brief_answer);self.ai_expand.setVisible(too_long);self.ai_expand.setText('展开完整回答')
+        self.ai_output.setPlainText(clean_markdown(self.ai_brief_answer));self.ai_expand.setVisible(too_long);self.ai_expand.setText('展开完整回答')
     def ask_ai(self):self.guarded(self.send_ai)
     def send_ai(self):
         if self.worker and self.worker.isRunning():raise ValueError('请等待当前请求完成')
@@ -601,7 +744,7 @@ class MainWindow(QMainWindow):
         if not d.exec():return
         with self.store.db:self.ai_id=self.store.db.execute('INSERT INTO ai_analysis_history(created,task,context,response,status) VALUES (?,?,?,?,?)',(today(),question,context,'','请求中')).lastrowid
         self.worker=AIWorker(self.store.setting('api_base','https://api.deepseek.com'),key,self.store.setting('model'),messages,self)
-        self.worker.result.connect(self.ai_done);self.worker.failed.connect(self.ai_failed);self.worker.finished.connect(lambda:self.ai_send.setEnabled(True));self.ai_send.setEnabled(False);self.ai_output.setPlainText('正在请求…');self.worker.start()
+        self.worker.finished.connect(self.finish_pending_close);self.worker.result.connect(self.ai_done);self.worker.failed.connect(self.ai_failed);self.worker.finished.connect(lambda:(self.ai_send.setEnabled(True),self.configure_ai_task()));self.ai_send.setEnabled(False);self.ai_send.setText('正在生成…');self.statusBar().showMessage('正在生成简短回答，当前内容已保留');self.worker.start()
     def ai_done(self,text):
         with self.store.db:self.store.db.execute('UPDATE ai_analysis_history SET response=?,status=? WHERE id=?',(text,'完成',self.ai_id))
         self.show_ai_answer(text,short=not any(word in self.question.toPlainText() for word in ('详细','展开','完整报告')))
@@ -613,12 +756,16 @@ class MainWindow(QMainWindow):
         if p:self.store.backup(p);message(self,'备份成功，不包含API Key')
     def restore(self):
         if self.worker and self.worker.isRunning():raise ValueError('请先等待AI请求结束')
+        if self.monitor.busy():raise ValueError('请先等待账号检查结束再恢复资料')
+        if self.backup_worker and self.backup_worker.isRunning():raise ValueError('自动备份正在进行，请稍后恢复资料')
         p,_=QFileDialog.getOpenFileName(self,'恢复完整资料包','','ZIP (*.zip)')
-        if p and QMessageBox.question(self,'恢复资料','将替换数据库并保留恢复前备份，确认？')==QMessageBox.StandardButton.Yes:
+        if p and confirm(self,'恢复资料','将替换当前资料。恢复前会自动备份，便于撤回。','恢复资料'):
             safety=self.store.restore(p);self.refresh();message(self,'恢复前备份：'+str(safety))
     def maintain(self):
+        if self.quitting:return
         try:
-            self.store.daily_backup()
+            if not (self.store.root/'backups'/('auto-'+today()+'.zip')).exists() and (not self.backup_worker or not self.backup_worker.isRunning()):
+                self.backup_worker=BackupWorker(self.store.root,self);self.backup_worker.failed.connect(lambda text:self.statusBar().showMessage(text));self.backup_worker.finished.connect(self.finish_pending_close);self.backup_worker.start()
             for kind,items in self.store.reminders().items():
                 for r in items:
                     if r['剩余天数']>0:continue
@@ -627,10 +774,16 @@ class MainWindow(QMainWindow):
                     if self.tray.isVisible() and QSystemTrayIcon.supportsMessages():
                         self.tray.showMessage(kind,r['名称']+' 已到期，请更新数据',QSystemTrayIcon.MessageIcon.Information,10000);self.store.settings({key:stamp})
         except Exception as exc:self.statusBar().showMessage('自动维护失败：'+str(exc))
+    def workers_busy(self):
+        return self.monitor.busy() or bool(self.worker and self.worker.isRunning()) or bool(self.backup_worker and self.backup_worker.isRunning())
+    def finish_pending_close(self):
+        if self.pending_quit and not self.workers_busy():QTimer.singleShot(0,self.close)
     def quit_app(self):
-        if self.worker and self.worker.isRunning():message(self,'请等待AI请求结束再退出');return
         self.quitting=True;self.close()
     def closeEvent(self,event):
-        if self.worker and self.worker.isRunning():event.ignore();message(self,'请等待AI请求结束');return
         if not self.quitting and self.store.setting('background','0')=='1' and self.tray.isVisible():self.hide();event.ignore();return
-        self.timer.stop();self.tray.hide();event.accept()
+        if self.workers_busy():
+            self.pending_quit=True;self.quitting=True
+            if self.monitor.busy():self.monitor.worker.requestInterruption()
+            event.ignore();toast(self,'正在结束后台任务，完成后会自动退出。');return
+        self.timer.stop();self.monitor.timer.stop();self.tray.hide();event.accept()

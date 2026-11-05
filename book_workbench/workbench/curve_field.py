@@ -6,6 +6,8 @@ from PySide6.QtGui import QPainter,QColor,QPen
 from PySide6.QtCharts import QChart,QChartView,QLineSeries,QValueAxis
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QDialog,QDialogButtonBox,QPlainTextEdit
 
+from .experience import Dialog as QDialog
+
 class CurvePlot(QWidget):
     def __init__(self,parent=None):
         super().__init__(parent);layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0)

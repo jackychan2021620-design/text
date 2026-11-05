@@ -11,7 +11,7 @@ def main():
     if not lock.tryLock(100):
         if '--smoke-test' not in sys.argv:QMessageBox.information(None,'工作台已运行','请从任务栏或托盘打开当前实例')
         return 1
-    store=None
+    store=None;window=None
     try:
         store=Store(root)
         with store.db:store.db.execute("UPDATE ai_analysis_history SET status='中断' WHERE status='请求中'")
@@ -67,12 +67,27 @@ def main():
                     if len(probe_store.rows('data_snapshots'))!=2:raise ValueError('Trash restore failed')
                     from .grading import grade,render
                     peers=[{'creators':100,'sellers':10*(i+1),'sales':100*(i+1)**2,'period_days':90,'confirmed':1,'notes':''} for i in range(5)]
-                    decision=grade(peers[-1],peers,'稳定销售型')
+                    decision=grade(peers[-1],[],'稳定销售型')
                     if decision['等级']!='非常适合':raise ValueError('Three-tier grading failed')
                     brief=render([{'商品ID':product_id,'图书':'diagnostic','分析':decision}])
                     if len(brief.splitlines())!=3 or '档次：非常适合' not in brief:raise ValueError('Brief grading response failed')
                 finally:probe_store.close()
-            report={'trash_recovery':True,'three_tiers':True,'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+            from .experience import FeedbackButton,Dialog,DURATION,selectable
+            from .monitoring import MonitorStore
+            from PySide6.QtTest import QTest
+            from PySide6.QtCore import Qt
+            import time
+            probe=FeedbackButton('feedback',window);probe.show();started=time.perf_counter();QTest.mousePress(probe,Qt.MouseButton.LeftButton)
+            feedback_ms=(time.perf_counter()-started)*1000
+            if not probe.isDown() or feedback_ms>=100:raise ValueError('Immediate press feedback failed')
+            QTest.mouseRelease(probe,Qt.MouseButton.LeftButton);probe.deleteLater()
+            if not selectable('copy').textInteractionFlags()&Qt.TextInteractionFlag.TextSelectableByMouse:raise ValueError('Selectable text policy failed')
+            window.nav.setCurrentRow(9)
+            if window.last_error:raise ValueError('Monitoring page failed: '+window.last_error)
+            if MonitorStore(store).load().get('enabled'):raise ValueError('Fresh diagnostic monitoring should be opt-in')
+            window.nav.setCurrentRow(2)
+            if window.last_error or window.search_timer.interval()!=200 or window.table.frozen is None:raise ValueError('Debounced collection table failed')
+            report={'single_book':True,'monitoring_local':True,'feedback_ms':feedback_ms,'debounce_ms':200,'transition_ms':DURATION,'trash_recovery':True,'three_tiers':True,'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
                     'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
             (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
             QTimer.singleShot(500,app.quit)
@@ -80,6 +95,13 @@ def main():
     except Exception:
         import traceback;traceback.print_exc();return 1
     finally:
+        if window:
+            window.timer.stop();window.monitor.timer.stop()
+            for worker in (window.worker,window.backup_worker,window.monitor.worker):
+                if worker and worker.isRunning():
+                    worker.requestInterruption()
+                    while not worker.wait(100):app.processEvents()
+            app.processEvents()
         if store:store.close()
         lock.unlock()
 if __name__=='__main__':raise SystemExit(main())

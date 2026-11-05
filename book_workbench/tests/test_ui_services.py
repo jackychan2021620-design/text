@@ -15,7 +15,7 @@ def test_every_page_forms_and_edit_persist(app,store,graph):
     record(store,'data_snapshots',product_id=p,creators=20,sellers=5,sales=100)
     record(store,'advertising_records',video_id=v,spend=100,orders=5,actual_gmv=200)
     window=MainWindow(store);window.show();app.processEvents()
-    for index in range(9):
+    for index in range(10):
         window.nav.setCurrentRow(index);app.processEvents();assert window.last_error is None
         labels=[x.text() for x in window.center.findChildren(__import__('PySide6.QtWidgets',fromlist=['QLabel']).QLabel)]
         assert not any('unhashable' in x or 'Traceback' in x for x in labels)

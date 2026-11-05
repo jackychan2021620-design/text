@@ -6,6 +6,8 @@ from PySide6.QtWidgets import QDialog,QWidget,QVBoxLayout,QHBoxLayout,QFormLayou
 from .image_io import read_image
 from .curve import locate_curve,trace_curve
 
+from .experience import Dialog as QDialog
+
 class PlotSelector(QWidget):
     changed=Signal(object)
     def __init__(self,image,rect=None):

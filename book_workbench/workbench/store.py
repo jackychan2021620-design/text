@@ -29,6 +29,7 @@ class Store:
         (self.root/'assets').mkdir(exist_ok=True);(self.root/'backups').mkdir(exist_ok=True)
         self.path=self.root/'books.sqlite3';self.connect();self.migrate()
     def connect(self):
+        self._analysis_token=None;self._analysis_cache={}
         self.db=sqlite3.connect(self.path);self.db.row_factory=sqlite3.Row
         self.db.execute('PRAGMA foreign_keys=ON');self.db.execute('PRAGMA journal_mode=WAL');self.db.execute('PRAGMA synchronous=FULL')
     def migrate(self):
@@ -93,6 +94,27 @@ COMMIT;
         if table not in set(SCHEMA)|{'video_review_reports','ai_analysis_history','product_analyses','entity_history'}:raise ValueError('未知表')
         where='1' if include_deleted else self.active_clause(table)
         return [dict(r) for r in self.db.execute(f'SELECT t.* FROM {table} t WHERE {where} ORDER BY t.id DESC')]
+    def page(self,table,search='',category='',page=0,size=50):
+        if table not in SCHEMA or page<0 or not 1<=size<=100:raise ValueError('无效的分页查询')
+        joins={'books':'JOIN books b ON b.id=t.id',
+               'product_links':'JOIN books b ON b.id=t.book_id',
+               'data_snapshots':'JOIN product_links p ON p.id=t.product_id JOIN books b ON b.id=p.book_id',
+               'video_tests':'JOIN product_links p ON p.id=t.product_id JOIN books b ON b.id=p.book_id',
+               'advertising_records':'JOIN video_tests v ON v.id=t.video_id JOIN product_links p ON p.id=v.product_id JOIN books b ON b.id=p.book_id'}
+        where=[self.active_clause(table)];params=[]
+        if category:where.append('b.category=?');params.append(category)
+        if search:
+            fields=['t.id','b.name','b.author','b.category']+['t.'+k for k,_,kind,_ in SCHEMA[table][1] if kind not in ('image','file','curve') and k!='ocr_text']
+            where.append('('+' OR '.join(f"instr(lower(COALESCE({f},'')),lower(?))>0" for f in fields)+')');params.extend([search]*len(fields))
+        base=f'FROM {table} t {joins[table]} WHERE '+ ' AND '.join(where)
+        total=self.db.execute('SELECT count(*) '+base,params).fetchone()[0]
+        rows=[dict(r) for r in self.db.execute('SELECT t.* '+base+' ORDER BY t.id DESC LIMIT ? OFFSET ?',(*params,size,page*size))]
+        return rows,total
+    def history_page(self,table,page=0,size=50):
+        if table not in ('video_review_reports','product_analyses','ai_analysis_history') or page<0 or not 1<=size<=100:raise ValueError('无效的历史查询')
+        where=self.active_clause(table)
+        total=self.db.execute(f'SELECT count(*) FROM {table} t WHERE {where}').fetchone()[0]
+        return [dict(r) for r in self.db.execute(f'SELECT t.* FROM {table} t WHERE {where} ORDER BY t.id DESC LIMIT ? OFFSET ?',(size,page*size))],total
     def deleted_rows(self,table):
         if table not in ('data_snapshots','advertising_records'):raise ValueError('该档案没有回收站')
         return [dict(r) for r in self.db.execute(f'SELECT t.* FROM {table} t WHERE NOT ({self.active_clause(table)}) ORDER BY t.id DESC')]
@@ -131,7 +153,13 @@ COMMIT;
         digest=hashlib.sha256(source.read_bytes()).hexdigest();suffix=source.suffix.lower()
         if len(suffix)>10 or not suffix[1:].isalnum():suffix='.bin'
         dest=self.root/'assets'/(digest+suffix)
-        if not dest.exists():shutil.copyfile(source,dest)
+        if not dest.exists():
+            with tempfile.NamedTemporaryFile(dir=self.root,prefix='attachment-',delete=False) as temporary:staging=Path(temporary.name)
+            try:
+                shutil.copyfile(source,staging)
+                if hashlib.sha256(staging.read_bytes()).hexdigest()!=digest:raise ValueError('附件在复制时发生变化，请重新选择')
+                os.replace(staging,dest)
+            finally:staging.unlink(missing_ok=True)
         return dest.relative_to(self.root).as_posix()
     def asset(self,value):
         p=(self.root/value).resolve()
@@ -224,13 +252,21 @@ COMMIT;
         r=self.db.execute(f'SELECT t.* FROM {table} t WHERE t.{key}=? AND {self.active_clause(table)} ORDER BY t.collected DESC,t.id DESC LIMIT 1',(id,)).fetchone()
         return dict(r) if r else None
     def analyze(self,id):
-        p=self.get('product_links',id);book=self.get('books',p['book_id']);peers=[]
-        for other in self.rows('product_links'):
-            b=self.get('books',other['book_id']);s=self.latest('data_snapshots','product_id',other['id'])
-            if b['category'] and b['category']==book['category'] and s and s['period_days']==90:peers.append(s)
-        return analysis.product(self.latest('data_snapshots','product_id',id),peers,self.grading_rules())
+        token=(self.db.total_changes,encode(self.grading_rules()))
+        if token!=self._analysis_token:
+            books={b['id']:b for b in self.rows('books')};products=self.rows('product_links')
+            snapshots={r['product_id']:dict(r) for r in self.db.execute(f"SELECT * FROM (SELECT t.*,row_number() OVER(PARTITION BY product_id ORDER BY collected DESC,id DESC) rank FROM data_snapshots t WHERE {self.active_clause('data_snapshots')}) WHERE rank=1")}
+            categories={};by_product={}
+            for p in products:
+                s=snapshots.get(p['id']);category=books[p['book_id']]['category'];by_product[p['id']]=category
+                if category and s and s['period_days']==90:categories.setdefault(category,[]).append(s)
+            rules=self.grading_rules()
+            self._analysis_cache={p['id']:analysis.product(snapshots.get(p['id']),categories.get(by_product[p['id']],[]),rules) for p in products}
+            self._analysis_token=token
+        if id not in self._analysis_cache:self.get('product_links',id)
+        return dict(self._analysis_cache[id])
     def grading_rules(self):
-        return validate_rules({'min_peers':self.setting('grade_min_peers','5'),'high_pct':self.setting('grade_high_pct','60'),'low_pct':self.setting('grade_low_pct','25')})
+        return validate_rules({k:self.setting('grade_'+k,str(v)) for k,v in DEFAULTS.items()})
     def grading_results(self,book_id=None):
         out=[]
         for p in self.rows('product_links'):
