@@ -12,6 +12,7 @@ from datetime import date,datetime,timedelta
 from pathlib import Path
 from .model import SCHEMA
 from . import analysis
+from .grading import DEFAULTS,validate_rules
 
 VERSION=1
 
@@ -79,9 +80,41 @@ COMMIT;
             if not required<={r[1] for r in db.execute(f'PRAGMA table_info({table})')}:raise ValueError('数据库辅助表字段不完整')
         if db.execute('PRAGMA integrity_check').fetchone()[0]!='ok' or db.execute('PRAGMA foreign_key_check').fetchall():raise ValueError('数据库完整性检查未通过')
     def close(self):self.db.close()
-    def rows(self,table):
+    @staticmethod
+    def active_clause(table,alias='t'):
+        if table in ('data_snapshots','advertising_records'):
+            return f"NOT EXISTS(SELECT 1 FROM settings trash WHERE trash.key='deleted:{table}:'||{alias}.id)"
+        if table=='product_analyses':
+            return f"NOT EXISTS(SELECT 1 FROM settings trash WHERE trash.key='deleted:data_snapshots:'||{alias}.snapshot_id)"
+        if table=='video_review_reports':
+            return f"({alias}.ad_id IS NULL OR NOT EXISTS(SELECT 1 FROM settings trash WHERE trash.key='deleted:advertising_records:'||{alias}.ad_id))"
+        return '1'
+    def rows(self,table,include_deleted=False):
         if table not in set(SCHEMA)|{'video_review_reports','ai_analysis_history','product_analyses','entity_history'}:raise ValueError('未知表')
-        return [dict(r) for r in self.db.execute(f'SELECT * FROM {table} ORDER BY id DESC')]
+        where='1' if include_deleted else self.active_clause(table)
+        return [dict(r) for r in self.db.execute(f'SELECT t.* FROM {table} t WHERE {where} ORDER BY t.id DESC')]
+    def deleted_rows(self,table):
+        if table not in ('data_snapshots','advertising_records'):raise ValueError('该档案没有回收站')
+        return [dict(r) for r in self.db.execute(f'SELECT t.* FROM {table} t WHERE NOT ({self.active_clause(table)}) ORDER BY t.id DESC')]
+    def refresh_snapshot_state(self,table,row):
+        if table=='data_snapshots':
+            latest=self.latest(table,'product_id',row['product_id'])
+            if latest:
+                self.db.execute('INSERT INTO snapshot_reminders VALUES (?,?) ON CONFLICT(product_id) DO UPDATE SET due=excluded.due',(row['product_id'],add_days(latest['collected'],15)))
+            else:self.db.execute('DELETE FROM snapshot_reminders WHERE product_id=?',(row['product_id'],))
+        else:
+            # Historical reports remain intact, while a deleted evidence record
+            # cannot count as a currently completed review or current advice.
+            valid=self.db.execute(f"SELECT 1 FROM video_review_reports t WHERE t.video_id=? AND t.action='完成复盘' AND {self.active_clause('video_review_reports')} LIMIT 1",(row['video_id'],)).fetchone()
+            self.db.execute('UPDATE video_review_tasks SET completed=? WHERE video_id=?',(int(bool(valid)),row['video_id']))
+    def restore_deleted(self,table,id):
+        if table not in ('data_snapshots','advertising_records'):raise ValueError('该档案没有回收站')
+        row=self.get(table,id);id=row['id']
+        with self.db:
+            removed=self.db.execute('DELETE FROM settings WHERE key=?',(f'deleted:{table}:{id}',)).rowcount
+            if removed:
+                self.db.execute('INSERT INTO entity_history(table_name,entity_id,created,record) VALUES (?,?,?,?)',(table,id,datetime.now().isoformat(),encode({'action':'restore','record':row})))
+                self.refresh_snapshot_state(table,row)
     def get(self,table,id):
         if table not in SCHEMA:raise ValueError('未知表')
         row=self.db.execute(f'SELECT * FROM {table} WHERE id=?',(id,)).fetchone()
@@ -174,23 +207,39 @@ COMMIT;
                 self.db.execute('INSERT INTO snapshot_images(snapshot_id,ad_id,path,ocr_text) VALUES (?,?,?,?)',(id if table=='data_snapshots' else None,id if table=='advertising_records' else None,result['screenshot'],result['ocr_text']))
         return id
     def delete(self,table,id):
-        self.get(table,id)
-        if table in ('data_snapshots','advertising_records'):raise ValueError('历史快照不可删除；用新增记录纠正')
+        row=self.get(table,id);id=row['id']
+        if table in ('data_snapshots','advertising_records'):
+            with self.db:
+                key=f'deleted:{table}:{id}'
+                if self.db.execute('SELECT 1 FROM settings WHERE key=?',(key,)).fetchone():return
+                self.db.execute('INSERT INTO settings VALUES (?,?)',(key,encode({'deleted_at':datetime.now().isoformat()})))
+                self.db.execute('INSERT INTO entity_history(table_name,entity_id,created,record) VALUES (?,?,?,?)',(table,id,datetime.now().isoformat(),encode({'action':'move_to_trash','record':row})))
+                self.refresh_snapshot_state(table,row)
+            return
         with self.db:
-            self.db.execute('INSERT INTO entity_history(table_name,entity_id,created,record) VALUES (?,?,?,?)',(table,id,today(),encode({'deleted':self.get(table,id)})))
+            self.db.execute('INSERT INTO entity_history(table_name,entity_id,created,record) VALUES (?,?,?,?)',(table,id,today(),encode({'deleted':row})))
             self.db.execute(f'DELETE FROM {table} WHERE id=?',(id,))
     def latest(self,table,key,id):
         if (table,key) not in [('data_snapshots','product_id'),('advertising_records','video_id')]:raise ValueError('不支持的查询')
-        r=self.db.execute(f'SELECT * FROM {table} WHERE {key}=? ORDER BY collected DESC,id DESC LIMIT 1',(id,)).fetchone()
+        r=self.db.execute(f'SELECT t.* FROM {table} t WHERE t.{key}=? AND {self.active_clause(table)} ORDER BY t.collected DESC,t.id DESC LIMIT 1',(id,)).fetchone()
         return dict(r) if r else None
     def analyze(self,id):
         p=self.get('product_links',id);book=self.get('books',p['book_id']);peers=[]
         for other in self.rows('product_links'):
             b=self.get('books',other['book_id']);s=self.latest('data_snapshots','product_id',other['id'])
             if b['category'] and b['category']==book['category'] and s and s['period_days']==90:peers.append(s)
-        return analysis.product(self.latest('data_snapshots','product_id',id),peers)
+        return analysis.product(self.latest('data_snapshots','product_id',id),peers,self.grading_rules())
+    def grading_rules(self):
+        return validate_rules({'min_peers':self.setting('grade_min_peers','5'),'high_pct':self.setting('grade_high_pct','60'),'low_pct':self.setting('grade_low_pct','25')})
+    def grading_results(self,book_id=None):
+        out=[]
+        for p in self.rows('product_links'):
+            if book_id is not None and p['book_id']!=book_id:continue
+            b=self.get('books',p['book_id']);a=self.analyze(p['id'])
+            out.append({'商品ID':p['id'],'图书':b['name'],'分类':b['category'],'分析':a})
+        return out
     def snapshot_diff(self,id):
-        ss=[dict(r) for r in self.db.execute('SELECT * FROM data_snapshots WHERE product_id=? ORDER BY collected DESC,id DESC LIMIT 2',(id,))]
+        ss=[dict(r) for r in self.db.execute(f'SELECT t.* FROM data_snapshots t WHERE t.product_id=? AND {self.active_clause("data_snapshots")} ORDER BY t.collected DESC,t.id DESC LIMIT 2',(id,))]
         if len(ss)<2:return {'说明':'需要至少两次快照'}
         return {'当前':ss[0],'上次':ss[1],'滚动指标差值':{k:ss[0][k]-ss[1][k] if ss[0][k] is not None and ss[1][k] is not None else None for k in ('creators','sellers','sales')},'说明':'滚动窗口进入和退出数据同时变化，差值不等于15天实际销量；不同周期不可直接比较'}
     def compare(self,ids,order='稳定出单机会'):
@@ -206,7 +255,7 @@ COMMIT;
         for v in self.rows('video_tests'):
             if self.get('product_links',v['product_id'])['book_id']!=book_id:continue
             ad=self.latest('advertising_records','video_id',v['id']) or {};task=dict(self.db.execute('SELECT * FROM video_review_tasks WHERE video_id=?',(v['id'],)).fetchone())
-            report=self.db.execute("SELECT report FROM video_review_reports WHERE video_id=? AND action='完成复盘' ORDER BY id DESC LIMIT 1",(v['id'],)).fetchone()
+            report=self.db.execute(f"SELECT t.report FROM video_review_reports t WHERE t.video_id=? AND t.action='完成复盘' AND {self.active_clause('video_review_reports')} ORDER BY t.id DESC LIMIT 1",(v['id'],)).fetchone()
             out.append({'视频':v,'广告':ad,'实际GMV/消耗':analysis.ratio(ad.get('actual_gmv'),ad.get('spend')),'消耗状态':'有消耗' if ad.get('spend') else '无有效消耗数据','任务':task,'复盘':json.loads(report[0]) if report else None})
         return out
     def log_review(self,id,action,report,ad_id=None):
@@ -259,7 +308,9 @@ COMMIT;
         result= {'图书':self.rows('books'),'商品':[{'档案':p,'分析':self.analyze(p['id'])} for p in self.rows('product_links')],
         '快照':self.rows('data_snapshots'),'视频':self.rows('video_tests'),'广告':self.rows('advertising_records'),
         '复盘':self.rows('video_review_reports'),'提醒':self.reminders(),
-        '历史限制':'累计广告快照按采集日取最新，不相加；比较需考虑周期、账号、品类、投放环境、视频数量；相关性不等于因果'}
+        '分档规则':self.grading_rules(),'历史限制':'累计广告快照按采集日取最新，不相加；比较需考虑周期、账号、品类、投放环境、视频数量；相关性不等于因果'}
+        result['快照']=[{k:v for k,v in row.items() if k not in ('ocr_text','screenshot','curve')} for row in result['快照']]
+        result['广告']=[{k:v for k,v in row.items() if k not in ('ocr_text','screenshot')} for row in result['广告']]
         if book_id is not None:
             self.get('books',book_id)
             result['图书']=[b for b in result['图书'] if b['id']==book_id]

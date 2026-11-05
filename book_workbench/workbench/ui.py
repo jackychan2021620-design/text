@@ -13,6 +13,7 @@ from .model import SCHEMA
 from . import APP_VERSION
 from .provenance import split_notes,combine_notes,scope_unknown,curve_source,UNKNOWN,CONFIRMED
 from .curve_field import CurveField
+from .grading import render as render_grades,rules_text,validate_rules
 from .store import today,encode
 from .services import AIWorker,OCRWorker,api_key,save_key,endpoint,autorun,SYSTEM
 
@@ -348,12 +349,14 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(STYLE);root=QSplitter();self.setCentralWidget(root)
         self.nav=QListWidget();self.nav.addItems(['工作台首页','01 图书数据库','02 数据采集中心','03 选品分析引擎','04 多商品对比','05 AI选品顾问','06 视频投放与复盘','07 历史复盘','设置与备份']);root.addWidget(self.nav)
         self.center=QWidget();self.layout=QVBoxLayout(self.center);self.layout.setContentsMargins(24,24,24,24);root.addWidget(self.center)
-        assistant=QWidget();ai=QVBoxLayout(assistant);ai.setContentsMargins(16,24,16,24);ai.addWidget(label('AI 选品顾问',True));ai.addWidget(label('事实 · 计算 · 推测 · 不确定性 · 建议'))
-        self.ai_task=QComboBox();self.ai_task.addItems(['商品选品分析','爆单容量判断','市场竞争分析','同类商品比较','15天数据变化分析','视频五日复盘','历史成功与失败案例分析']);ai.addWidget(self.ai_task)
+        assistant=QWidget();ai=QVBoxLayout(assistant);ai.setContentsMargins(16,24,16,24);ai.addWidget(label('AI 选品顾问',True));ai.addWidget(label('三档推荐 · 简短理由'))
+        self.ai_task=QComboBox();self.ai_task.addItems(['三档选品推荐','简短问答','视频五日复盘','同类商品比较','15天数据变化分析','历史成功与失败案例分析']);ai.addWidget(self.ai_task)
         self.ai_scope=QComboBox();self.ai_scope.addItem('全部图书历史',None);ai.addWidget(self.ai_scope)
         self.question=QTextEdit();self.question.setPlaceholderText('输入问题；发送前展示完整上下文。AI不能操作数据或投放。');self.question.setMaximumHeight(120);ai.addWidget(self.question)
         self.ai_send=button('核对上下文并发送',self.ask_ai);ai.addWidget(self.ai_send)
-        self.ai_output=QTextEdit();self.ai_output.setReadOnly(True);ai.addWidget(self.ai_output,1);root.addWidget(assistant);root.setSizes([205,1000,345])
+        self.ai_output=QTextEdit();self.ai_output.setReadOnly(True);ai.addWidget(self.ai_output,1)
+        self.ai_expand=button('展开完整回答',self.toggle_ai_answer);self.ai_expand.hide();ai.addWidget(self.ai_expand)
+        self.ai_task.currentTextChanged.connect(self.configure_ai_task);self.configure_ai_task();root.addWidget(assistant);root.setSizes([205,1000,345])
         self.nav.currentRowChanged.connect(self.refresh);self.nav.setCurrentRow(0)
         pix=QPixmap(64,64);pix.fill(QColor('#567e6a'));p=QPainter(pix);p.setPen(QColor('white'));p.drawText(pix.rect(),Qt.AlignmentFlag.AlignCenter,'书');p.end();self.setWindowIcon(QIcon(pix))
         self.tray=QSystemTrayIcon(self.windowIcon(),self);menu=QMenu();menu.addAction('打开工作台',self.showNormal);menu.addAction('退出',self.quit_app);self.tray.setContextMenu(menu)
@@ -391,7 +394,8 @@ class MainWindow(QMainWindow):
         return self.visible[i]
     def crud(self,table,extra=()):
         self.table_name=table
-        self.toolbar([('新增',lambda:self.editor(table)),('查看／编辑',lambda:self.editor(table,self.selected())),('删除',lambda:self.remove(table)),('历史',lambda:document(self,'修改历史',[r for r in self.store.rows('entity_history') if r['table_name']==table and r['entity_id']==self.selected()['id']]))]+list(extra))
+        recovery=[('回收站',lambda:self.recycle_bin(table))] if table in ('data_snapshots','advertising_records') else []
+        self.toolbar([('新增',lambda:self.editor(table)),('查看／编辑',lambda:self.editor(table,self.selected())),('删除',lambda:self.remove(table)),('历史',lambda:document(self,'修改历史',[r for r in self.store.rows('entity_history') if r['table_name']==table and r['entity_id']==self.selected()['id']]))]+list(extra)+recovery)
         filters=QWidget();row=QHBoxLayout(filters);self.search=QLineEdit();self.search.setPlaceholderText('搜索名称、链接、编号、备注…');row.addWidget(self.search)
         self.category=QComboBox();self.category.addItem('全部分类');self.category.addItems(sorted({r['category'] for r in self.store.rows('books') if r['category']}));row.addWidget(self.category);self.layout.addWidget(filters)
         self.table=make_table([],[]);self.layout.addWidget(self.table,1)
@@ -410,7 +414,26 @@ class MainWindow(QMainWindow):
         self.table.cellDoubleClicked.connect(lambda *_:self.guarded(lambda:self.editor(table,self.selected())))
     def remove(self,table):
         r=self.selected()
-        if QMessageBox.question(self,'删除记录','确认删除？有下游快照、投放或复盘记录的档案不能删除。')==QMessageBox.StandardButton.Yes:self.store.delete(table,r['id']);self.refresh()
+        prompt='删除这条快照？将移入回收站，不再参与最新数据、对比、分档和提醒；可从回收站恢复。' if table in ('data_snapshots','advertising_records') else '确认删除档案？仍有关联历史、投放或复盘记录的图书／商品档案不能直接删除。'
+        if QMessageBox.question(self,'删除记录',prompt)==QMessageBox.StandardButton.Yes:self.store.delete(table,r['id']);self.refresh_crud(table)
+    def refresh_crud(self,table):
+        if table=='advertising_records' and self.nav.currentRow()==6:self.ad_records()
+        elif table=='product_links' and self.nav.currentRow()==1:self.product_list()
+        else:self.refresh()
+    def recycle_bin(self,table):
+        d=QDialog(self);d.setWindowTitle('已删除快照 · 可恢复');d.resize(850,500);layout=QVBoxLayout(d)
+        layout.addWidget(label('这些记录已退出计算和提醒。选择一行点击恢复，可重新参与统计；原始图片和历史引用仍保留。'))
+        view=make_table(['ID','所属商品／视频','采集日期','销量／实际GMV'],[]);layout.addWidget(view,1);deleted=[]
+        def update():
+            deleted[:]=self.store.deleted_rows(table);view.setRowCount(len(deleted))
+            for i,r in enumerate(deleted):
+                values=[r['id'],r.get('product_id',r.get('video_id')),r['collected'],r.get('sales') if table=='data_snapshots' else r.get('actual_gmv')]
+                for j,value in enumerate(values):view.setItem(i,j,QTableWidgetItem(cell(value)))
+        def restore():
+            i=view.currentRow()
+            if i<0:message(d,'请先选择需要恢复的记录');return
+            self.store.restore_deleted(table,deleted[i]['id']);update();self.refresh_crud(table)
+        layout.addWidget(button('恢复选中记录',lambda:self.guarded(restore)));layout.addWidget(button('关闭',d.accept));update();d.exec()
     def books(self):
         self.crud('books');self.toolbar([('管理商品链接',lambda:self.product_list())])
     def product_list(self):
@@ -419,10 +442,10 @@ class MainWindow(QMainWindow):
         self.layout.addWidget(label('90天滚动快照 · 每个商品链接独立15天更新。原图、OCR结果与人工核对数据一同保存。'))
         self.crud('data_snapshots',[('两次快照对比',lambda:document(self,'快照变化（不是15天销量）',self.store.snapshot_diff(self.selected()['product_id'])))])
     def products(self):
-        self.layout.addWidget(label('规则为描述性启发式；同类别至少5个有效90天商品才展示相对百分位，不估计个人爆单概率。'))
-        self.crud('product_links',[('分析结果与曲线',self.show_analysis)])
+        self.layout.addWidget(label('三档按固定规则计算，门槛可在设置中调整；数据或同类样本不足先补齐，不硬分档。'))
+        self.crud('product_links',[('三档简明推荐',lambda:document(self,'三档选品推荐',render_grades(self.store.grading_results()))),('分档规则',lambda:document(self,'三档规则',rules_text(self.store.grading_rules()))),('分析结果与曲线',self.show_analysis)])
     def show_analysis(self):
-        id=self.selected()['id'];document(self,'选品分析',self.store.analyze(id));s=self.store.latest('data_snapshots','product_id',id)
+        id=self.selected()['id'];p=self.store.get('product_links',id);document(self,'选品分析',render_grades([{'商品ID':id,'图书':self.store.get('books',p['book_id'])['name'],'分析':self.store.analyze(id)}]));s=self.store.latest('data_snapshots','product_id',id)
         if s and s['curve']:self.chart(json.loads(s['curve']),'每日销量（人工确认）')
     def chart(self,values,title):
         from PySide6.QtCharts import QChart,QChartView,QLineSeries
@@ -443,7 +466,7 @@ class MainWindow(QMainWindow):
         l.addWidget(make_table(['商品ID','图书','售价','佣金','带货','出单','销量','出单率','出单人均','参与人均','趋势','市场需求','进入风险'],[[r['商品']['id'],r['图书'],r['商品']['price'],r['商品']['commission'],(r['快照'] or {}).get('creators'),(r['快照'] or {}).get('sellers'),(r['快照'] or {}).get('sales'),r['分析'].get('达人出单率'),r['分析'].get('出单达人人均销量'),r['分析'].get('参与达人人均销量'),r['分析'].get('销量趋势'),r['分析'].get('市场需求'),r['分析'].get('新创作者进入风险')] for r in records]))
         text=QTextEdit();text.setReadOnly(True);text.setPlainText(encode_pretty(records));l.addWidget(text);d.exec()
     def ai_page(self):
-        self.layout.addWidget(label('在右侧选择任务并提出问题。软件发送的是可预览的本地图书、快照、计算结果、视频与历史复盘文字，图片不上传。API未配置不影响其他模块。'))
+        self.layout.addWidget(label('右侧默认按三档规则即时推荐，无需配置Key。需要追问时切换“简短问答”，默认只给结论和短理由；发送前可预览资料，图片不会上传。'))
         self.layout.addWidget(button('打开AI连接设置',lambda:self.nav.setCurrentRow(8)))
         self.layout.addWidget(make_table(['时间','任务','状态'],[[r['created'],r['task'],r['status']] for r in self.store.rows('ai_analysis_history')]),1)
     def videos(self):
@@ -494,7 +517,7 @@ class MainWindow(QMainWindow):
         document(self,'按品类／账号／素材／标签／统计范围分组',{'统计':[{'分组':k,**v} for k,v in groups.items()],'限制':'仅最新广告快照；非随机样本，未控制预算与投放环境，不能归因。可让AI结合完整历史提出待验证规则。'})
     def home(self):
         products=self.store.rows('product_links');videos=self.store.rows('video_tests');reminders=self.store.reminders()
-        stats={'商品总数':len(products),'待分析':sum(p['status']=='待分析' for p in products),'优先测试':sum(self.store.analyze(p['id']).get('等级')=='优先测试' for p in products),'测试中':sum(p['status']=='测试中' for p in products),'已人工标记爆单':sum(p['history_tag'] in ('大爆单','小爆单') for p in products)}
+        stats={'商品总数':len(products),'待分析':sum(p['status']=='待分析' for p in products),'非常适合':sum(self.store.analyze(p['id']).get('等级')=='非常适合' for p in products),'测试中':sum(p['status']=='测试中' for p in products),'已人工标记爆单':sum(p['history_tag'] in ('大爆单','小爆单') for p in products)}
         self.layout.addWidget(label('    '.join(f'{k}  {v}' for k,v in stats.items())))
         for kind,items in reminders.items():
             self.layout.addWidget(label(kind+' · 今日／即将到期／逾期'))
@@ -502,8 +525,8 @@ class MainWindow(QMainWindow):
         recent=[{'类型':'视频复盘','日期':r['created'],'详情':str(r['video_id'])+' · '+r['action']} for r in self.store.rows('video_review_reports')[:5]]
         recent += [{'类型':'商品更新','日期':s['collected'],'详情':f'商品#{s["product_id"]} 快照#{s["id"]}'} for s in self.store.rows('data_snapshots')[:5]]
         self.toolbar([('最近完成任务',lambda:document(self,'最近完成任务',recent)),('销量趋势概览',self.trend_overview),('商品状态分布',lambda:document(self,'商品状态分布',{s:sum(p['status']==s for p in products) for s in {p['status'] for p in products}}))])
-        ranked=sorted([{'商品':p['id'],'图书':self.store.get('books',p['book_id'])['name'],'等级':self.store.analyze(p['id']).get('等级'),'趋势':self.store.analyze(p['id']).get('销量趋势','数据不足')} for p in products],key=lambda r:['优先测试','值得关注','谨慎测试','暂不投入','数据不足'].index(r['等级']))[:8]
-        self.layout.addWidget(make_table(['选品概览','图书','建议等级','趋势'],[[r['商品'],r['图书'],r['等级'],r['趋势']] for r in ranked]),1)
+        ranked=sorted([{'商品':p['id'],'图书':self.store.get('books',p['book_id'])['name'],'等级':self.store.analyze(p['id']).get('等级'),'趋势':self.store.analyze(p['id']).get('销量趋势','数据不足')} for p in products],key=lambda r:{'非常适合':0,'适合':1,'直接放弃':2,None:3}.get(r['等级'],3))[:8]
+        self.layout.addWidget(make_table(['选品概览','图书','建议等级','趋势'],[[r['商品'],r['图书'],r['等级'] or '待补数据',r['趋势']] for r in ranked]),1)
         self.toolbar([('最近新增商品',lambda:document(self,'最近新增商品',products[:10])),('最近投放结果',lambda:document(self,'最近投放快照',self.store.rows('advertising_records')[:10]))])
     def trend_overview(self):
         ss=[]
@@ -513,7 +536,7 @@ class MainWindow(QMainWindow):
         document(self,'趋势概览；详细曲线见选品分析',ss)
     def settings_page(self):
         form_widget=QWidget();form=QFormLayout(form_widget);self.config={}
-        for k,title,default in [('api_base','DeepSeek官方API地址','https://api.deepseek.com'),('model','模型（获取后选择）',''),('min_spend','最低测试消耗（元，经营门槛）','100'),('min_orders','最低订单样本（经营门槛）','5'),('target_ratio','目标实际GMV/消耗（非利润率）','1')]:
+        for k,title,default in [('api_base','DeepSeek官方API地址','https://api.deepseek.com'),('model','模型（获取后选择）',''),('min_spend','最低测试消耗（元，经营门槛）','100'),('min_orders','最低订单样本（经营门槛）','5'),('target_ratio','目标实际GMV/消耗（非利润率）','1'),('grade_min_peers','分档所需最少同类商品','5'),('grade_high_pct','较好指标超过同类百分比（默认60）','60'),('grade_low_pct','较弱指标低于同类百分比（默认25）','25')]:
             w=QComboBox() if k=='model' else QLineEdit()
             if k=='model':w.setEditable(True);w.addItem(self.store.setting(k,default))
             else:w.setText(self.store.setting(k,default))
@@ -530,6 +553,7 @@ class MainWindow(QMainWindow):
             n=float(values[k])
             if not math.isfinite(n) or n<=0 or (k=='min_orders' and not n.is_integer()):raise ValueError('门槛必须是正数，订单应为整数')
             if k=='min_orders':values[k]=str(int(n))
+        validate_rules({'min_peers':values['grade_min_peers'],'high_pct':values['grade_high_pct'],'low_pct':values['grade_low_pct']})
         key=self.key_input.text().strip()
         if key:
             if self.persist.isChecked():save_key(key)
@@ -543,9 +567,30 @@ class MainWindow(QMainWindow):
     def got_models(self,models):
         if self.nav.currentRow()!=8:return
         self.config['model'].clear();self.config['model'].addItems(models);message(self,'请选择模型并保存设置')
+    def configure_ai_task(self,*args):
+        grading=self.ai_task.currentText()=='三档选品推荐'
+        self.question.setEnabled(not grading)
+        self.question.setPlaceholderText('选择图书后按规则推荐；如需追问，切换“简短问答”。' if grading else '输入一个具体问题，默认只回答结论与简短理由。')
+        self.ai_send.setText('按三档规则推荐' if grading else '核对后发送给AI')
+    def toggle_ai_answer(self):
+        self.ai_expanded=not self.ai_expanded
+        self.ai_output.setPlainText(self.ai_full_answer if self.ai_expanded else self.ai_brief_answer)
+        self.ai_expand.setText('收起回答' if self.ai_expanded else '展开完整回答')
+    def show_ai_answer(self,text,short=True):
+        self.ai_full_answer=text;self.ai_expanded=False
+        lines=[x.strip() for x in text.splitlines() if x.strip()]
+        too_long=short and (len(text)>200 or len(lines)>4)
+        self.ai_brief_answer=('\n'.join(lines[:2])[:180]+'\n（较长回复已折叠，可展开查看）') if too_long else text
+        self.ai_output.setPlainText(self.ai_brief_answer);self.ai_expand.setVisible(too_long);self.ai_expand.setText('展开完整回答')
     def ask_ai(self):self.guarded(self.send_ai)
     def send_ai(self):
         if self.worker and self.worker.isRunning():raise ValueError('请等待当前请求完成')
+        if self.ai_task.currentText()=='三档选品推荐':
+            results=self.store.grading_results(self.ai_scope.currentData())
+            if len(results)>10:raise ValueError('请先选择具体图书，每次最多推荐10个商品，避免冗长回复。')
+            reply=render_grades(results);self.show_ai_answer(reply,short=False)
+            with self.store.db:self.store.db.execute('INSERT INTO ai_analysis_history(created,task,context,response,status) VALUES (?,?,?,?,?)',(today(),'三档选品推荐',encode({'rules':self.store.grading_rules(),'results':results}),reply,'固定规则推荐'))
+            return
         key=self.runtime_key or api_key()
         if not key:raise ValueError('请在设置配置API Key；本地功能无需Key')
         context=encode_pretty(self.store.context(self.ai_scope.currentData()));question=self.ai_task.currentText()+'\n'+self.question.toPlainText()
@@ -559,7 +604,7 @@ class MainWindow(QMainWindow):
         self.worker.result.connect(self.ai_done);self.worker.failed.connect(self.ai_failed);self.worker.finished.connect(lambda:self.ai_send.setEnabled(True));self.ai_send.setEnabled(False);self.ai_output.setPlainText('正在请求…');self.worker.start()
     def ai_done(self,text):
         with self.store.db:self.store.db.execute('UPDATE ai_analysis_history SET response=?,status=? WHERE id=?',(text,'完成',self.ai_id))
-        self.ai_output.setPlainText(text)
+        self.show_ai_answer(text,short=not any(word in self.question.toPlainText() for word in ('详细','展开','完整报告')))
     def ai_failed(self,text):
         with self.store.db:self.store.db.execute('UPDATE ai_analysis_history SET response=?,status=? WHERE id=?',(text,'失败',self.ai_id))
         self.ai_output.setPlainText(text)

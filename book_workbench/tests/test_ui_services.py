@@ -42,15 +42,15 @@ class Response:
     def __exit__(self,*args):pass
     def json(self):return self.data
 
-def test_ai_protocol_and_five_sections(app):
+def test_ai_brief_protocol(app):
     output=[];errors=[]
     worker=AIWorker('https://api.deepseek.com','test-only','model-from-service',[{'role':'user','content':'测试上下文'}])
     worker.result.connect(output.append);worker.failed.connect(errors.append)
-    text='数据事实：待核对\n计算结果：GMV/消耗=2\n合理推测：值得验证\n不确定因素：样本小\n下一步建议：补充测试'
+    text='结论：继续观察。\n理由：样本不足，需要补充真实投放数据。'
     with patch('workbench.services.requests.post',return_value=Response({'choices':[{'message':{'content':text}}]})) as post:
         worker.run();assert output==[text];assert not errors
         assert post.call_args.kwargs['json']['messages'][0]['content']=='测试上下文'
-        assert post.call_args.kwargs['allow_redirects'] is False
+        assert post.call_args.kwargs['allow_redirects'] is False;assert post.call_args.kwargs['json']['max_tokens']==512
     with patch('workbench.services.requests.post',return_value=Response({},401)):
         worker.run();assert '401' in errors[-1]
     worker.key='';worker.run();assert 'API Key' in errors[-1]
@@ -100,7 +100,7 @@ def test_edit_draft_and_scoped_ai_without_key(app,store,graph):
     row=store.get('books',graph[0]);d=Editor(store,'books',row);d.fields['author'].setText('编辑未确认');d.reject()
     d2=Editor(store,'books',row);assert d2.fields['author'].text()=='编辑未确认';d2.reject()
     assert store.get('books',graph[0])['author'] is None
-    window=MainWindow(store)
+    window=MainWindow(store);window.ai_task.setCurrentText('简短问答')
     with patch('workbench.ui.api_key',return_value=''):
         with pytest.raises(ValueError,match='API Key'):window.send_ai()
     assert store.rows('ai_analysis_history')==[]

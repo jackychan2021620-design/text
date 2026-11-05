@@ -80,7 +80,8 @@ def test_ad_gmv_separation_comparison_history(store,graph):
 def test_immutable_snapshots(store,graph):
     id=record(store,'data_snapshots',product_id=graph[1])
     with pytest.raises(ValueError):store.save('data_snapshots',store.get('data_snapshots',id),id)
-    with pytest.raises(ValueError):store.delete('data_snapshots',id)
+    store.delete('data_snapshots',id);assert not store.rows('data_snapshots');assert store.deleted_rows('data_snapshots')[0]['id']==id
+    store.restore_deleted('data_snapshots',id);assert store.get('data_snapshots',id)['id']==id
 
 def test_compare_relative_category_and_limits(store,graph):
     b,p=graph;ids=[p]

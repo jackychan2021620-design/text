@@ -60,8 +60,19 @@ def main():
                     save.click()
                     if not hasattr(edit,'saved_id') or edit.saved_id==original:raise ValueError('Snapshot revision save failed')
                     if probe_store.get('data_snapshots',original)['sales']!=500 or probe_store.get('data_snapshots',edit.saved_id)['sales']!=1194:raise ValueError('Revision did not preserve original data')
+                    probe_store.delete('data_snapshots',original)
+                    if [r['id'] for r in probe_store.rows('data_snapshots')]!=[edit.saved_id]:raise ValueError('Trash did not hide only the selected snapshot')
+                    if probe_store.latest('data_snapshots','product_id',product_id)['id']!=edit.saved_id:raise ValueError('Trash changed the good latest snapshot')
+                    probe_store.restore_deleted('data_snapshots',original)
+                    if len(probe_store.rows('data_snapshots'))!=2:raise ValueError('Trash restore failed')
+                    from .grading import grade,render
+                    peers=[{'creators':100,'sellers':10*(i+1),'sales':100*(i+1)**2,'period_days':90,'confirmed':1,'notes':''} for i in range(5)]
+                    decision=grade(peers[-1],peers,'稳定销售型')
+                    if decision['等级']!='非常适合':raise ValueError('Three-tier grading failed')
+                    brief=render([{'商品ID':product_id,'图书':'diagnostic','分析':decision}])
+                    if len(brief.splitlines())!=3 or '档次：非常适合' not in brief:raise ValueError('Brief grading response failed')
                 finally:probe_store.close()
-            report={'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+            report={'trash_recovery':True,'three_tiers':True,'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
                     'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
             (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
             QTimer.singleShot(500,app.quit)

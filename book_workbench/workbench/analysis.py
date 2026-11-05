@@ -1,6 +1,7 @@
 """Transparent descriptive heuristics, never personal success probabilities."""
 import statistics
 from .provenance import scope_unknown,curve_source
+from .grading import grade,valid_peer
 
 def ratio(a,b):
     return a/b if a is not None and b is not None and b>0 else None
@@ -17,29 +18,21 @@ def trend(values):
     if last<first*.75:return '持续衰退型'
     return '稳定销售型'
 
-def product(snapshot, peers=()):
-    if not snapshot:return {'等级':'数据不足','不确定因素':'尚无90天快照'}
+def product(snapshot, peers=(),rules=None):
+    if not snapshot:return grade(None,peers,'数据不足',rules)
     s=snapshot;c=s['creators'];o=s['sellers'];sales=s['sales']
     import json
     curve=json.loads(s['curve'] or '[]') if isinstance(s['curve'],str) else (s['curve'] or [])
     unknown=scope_unknown(s.get('notes'));denominator=None if unknown else c
     rate=ratio(o,denominator);per_seller=ratio(sales,o);per_creator=ratio(sales,denominator);shape=trend(curve)
     result={'达人出单率':rate,'出单达人人均销量':per_seller,'参与达人人均销量':per_creator,'销量趋势':shape,'曲线来源':'读图估算，仅趋势参考' if curve_source(s.get('notes'))=='读图估算' else '用户录入或未提供曲线'}
-    valid=[p for p in peers if p.get('sales') is not None and p.get('creators') and p.get('sellers') is not None and not scope_unknown(p.get('notes'))]
-    if s['period_days']!=90 or rate is None or sales is None:
-        result.update(等级='数据不足',不确定因素='带货人数周期待确认；数据可以保存，但暂不计算以带货人数为分母的指标' if unknown else '需要90天统计及有效带货人数、出单人数、销量');return result
-    demand=sum(p['sales']<=sales for p in valid)/len(valid) if len(valid)>=5 else None
-    coverage=sum(ratio(p['sellers'],p['creators'])<=rate for p in valid)/len(valid) if len(valid)>=5 else None
-    level='值得关注'
-    if not sales or not o:level='暂不投入'
-    elif shape=='持续衰退型':level='谨慎测试'
-    elif demand is not None and demand>=.6 and coverage>=.6:level='优先测试'
-    result.update({'等级':level,'市场需求':f'同类销量百分位 {demand:.0%}' if demand is not None else '同类有效样本少于5个，暂不排名',
-        '创作者出单覆盖面':f'{rate:.1%}（历史参与者覆盖，不是个人出单概率）','销量容量':sales,
-        '爆单潜力':f'曲线为{shape}；人均销量与峰值仅描述历史容量',
-        '新创作者进入风险':'缺少创作者粉丝、投放成本与流量分布，无法估计个人成功率',
-        '综合建议':level+'；先用可控预算验证账号与素材适配',
-        '不确定因素':'滚动90天数据；曲线单位及口径须核对；同类样本非随机，排名不是因果或概率'})
+    decision=grade(s,peers,shape,rules);result.update(decision)
+    ranks=decision.get('同类百分位',{})
+    result.update({'市场需求':f'同类销量百分位 {ranks["总销量"]:.0f}%' if ranks else '同类有效样本或数据不足，暂不排名',
+        '创作者出单覆盖面':f'{rate:.1%}（历史覆盖面）' if rate is not None else '带货人数口径待核对',
+        '销量容量':sales,'爆单潜力':f'历史曲线为{shape}，不推算个人爆单概率',
+        '新创作者进入风险':'缺少粉丝、流量分布与投放成本数据',
+        '综合建议':decision['理由'],'不确定因素':decision['理由'] if not decision['等级'] else '经验门槛未经经营验证；同类样本非随机，分档不保证出单或盈利'})
     return result
 
 def review(ad, peers, analysis, min_spend=100, min_orders=5, target_ratio=1):
