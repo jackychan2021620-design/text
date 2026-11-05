@@ -40,7 +40,33 @@ jobs:
             if ($LASTEXITCODE -notin @(0, 3010)) { throw 'Inno Setup installation failed' }
           }
       - name: Test, package, exercise bundled OCR, install and start Windows app
-        run: ./scripts/build-windows.ps1
+        run: |
+          try {
+            ./scripts/build-windows.ps1 *>&1 | Tee-Object -FilePath build-output.log
+            if ($LASTEXITCODE -ne 0) { throw "Build script exited with code $LASTEXITCODE" }
+          } catch {
+            $detail = $_.Exception.Message + "`n" + $_.InvocationInfo.PositionMessage
+            if (Test-Path build-output.log) { $detail += "`n" + ((Get-Content build-output.log -Tail 60) -join "`n") }
+            $detail = $detail.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+            Write-Host "::error title=Windows build details::$detail"
+            throw
+          }
+      - name: Surface precise test failures
+        if: failure()
+        run: |
+          @'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          path=Path('test-results.xml')
+          if path.exists():
+              for case in ET.parse(path).iter('testcase'):
+                  for kind in ('failure','error'):
+                      node=case.find(kind)
+                      if node is not None:
+                          message=(node.text or node.get('message',''))[-12000:]
+                          message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+                          print('::error title='+case.get('name','Test failure')+'::'+message)
+          '@ | & '.\.venv\Scripts\python.exe' -
       - name: Upload runnable Windows installer and portable package
         uses: actions/upload-artifact@v4
         with:
@@ -55,6 +81,7 @@ jobs:
         with:
           name: BookWorkbench-Windows-diagnostics
           path: |
+            book_workbench/build-output.log
             book_workbench/test-results.xml
             book_workbench/build/BookWorkbench/warn-BookWorkbench.txt
           if-no-files-found: ignore
