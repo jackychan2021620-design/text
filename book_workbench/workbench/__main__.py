@@ -15,7 +15,19 @@ def main():
         store=Store(root)
         with store.db:store.db.execute("UPDATE ai_analysis_history SET status='中断' WHERE status='请求中'")
         window=MainWindow(store);window.show()
-        if '--smoke-test' in sys.argv:QTimer.singleShot(500,app.quit)
+        if '--smoke-test' in sys.argv:
+            # Exercise bundled OCR inside the actual frozen process, not system Python.
+            import json
+            from PySide6.QtGui import QImage,QPainter,QFont,QColor
+            from .services import ocr,ocr_executable
+            image=QImage(800,140,QImage.Format.Format_RGB32);image.fill(QColor('white'))
+            painter=QPainter(image);painter.setPen(QColor('black'));painter.setFont(QFont('Arial',40));painter.drawText(30,90,'SALES 12345');painter.end()
+            sample=root/'packaged-ocr.png';image.save(str(sample));text=ocr(sample)
+            if '12345' not in text:raise ValueError('Packaged OCR failed functional check')
+            report={'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+                    'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
+            (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
+            QTimer.singleShot(500,app.quit)
         return app.exec()
     except Exception:
         import traceback;traceback.print_exc();return 1

@@ -47,17 +47,25 @@ def autorun(enabled):
             try:winreg.DeleteValue(key,'BookWorkbench')
             except FileNotFoundError:pass
 
-def ocr(path):
+def ocr_executable():
+    if getattr(sys,'frozen',False):
+        bundled=Path(sys._MEIPASS)/'tesseract'/'tesseract.exe'
+        if bundled.is_file():return str(bundled)
     command=os.environ.get('BOOK_WORKBENCH_TESSERACT') or shutil.which('tesseract')
     if not command and sys.platform=='win32':
         candidate=Path(os.environ.get('ProgramFiles','C:/Program Files'))/'Tesseract-OCR'/'tesseract.exe'
         if candidate.is_file():command=str(candidate)
-    if not command:raise ValueError('未安装 Tesseract OCR；请按使用说明安装并配置PATH。仍可手动录入。')
+    if not command:raise ValueError('未找到OCR引擎。源码开发需安装Tesseract 5；Windows发行包请完整解压后运行。')
+    return command
+
+def ocr(path):
+    command=ocr_executable()
     local=(Path(sys._MEIPASS) if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1])/'.ocr'/'tessdata'
     data_args=['--tessdata-dir',str(local)] if (local/'chi_sim.traineddata').exists() else []
-    langs=subprocess.run([command,*data_args,'--list-langs'],capture_output=True,text=True,timeout=15,check=True).stdout
-    if 'chi_sim' not in langs:raise ValueError('缺少chi_sim中文识别模型，请安装中文模型；仍可手动录入。')
-    r=subprocess.run([command,str(path),'stdout',*data_args,'-l','chi_sim+eng','--psm','6'],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=90)
+    startup={'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}
+    langs=subprocess.run([command,*data_args,'--list-langs'],capture_output=True,text=True,timeout=15,check=True,**startup).stdout
+    if 'chi_sim' not in langs:raise ValueError('缺少中文OCR模型；请完整解压发行包或运行源码的setup_ocr.py。')
+    r=subprocess.run([command,str(path),'stdout',*data_args,'-l','chi_sim+eng','--psm','6'],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=90,**startup)
     if r.returncode:raise ValueError('OCR识别失败，请检查图片与语言模型')
     if not r.stdout.strip():raise ValueError('没有识别到文字，请手动核对录入')
     return r.stdout

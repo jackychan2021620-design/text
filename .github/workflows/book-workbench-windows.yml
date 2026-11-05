@@ -1,0 +1,60 @@
+name: Book Workbench Windows App
+on:
+  workflow_dispatch:
+  push:
+    branches: ['book-workbench-v1.1-20261105']
+    paths:
+      - 'book_workbench/**'
+      - '.github/workflows/book-workbench-windows.yml'
+permissions:
+  contents: read
+concurrency:
+  group: book-workbench-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    defaults:
+      run:
+        working-directory: book_workbench
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install verified Windows OCR and installer toolchains
+        run: |
+          choco install tesseract --yes --no-progress
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw 'Tesseract installation failed' }
+          $ocr = Join-Path $env:ProgramFiles 'Tesseract-OCR\tesseract.exe'
+          if (-not (Test-Path $ocr)) { throw 'Tesseract executable missing' }
+          "BOOK_WORKBENCH_TESSERACT=$ocr" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -notin @(0, 3010)) { throw 'Inno Setup installation failed' }
+          }
+      - name: Test, package, exercise bundled OCR, install and start Windows app
+        run: ./scripts/build-windows.ps1
+      - name: Upload runnable Windows installer and portable package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BookWorkbench-Windows-x64
+          path: book_workbench/dist/downloads/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BookWorkbench-Windows-diagnostics
+          path: |
+            book_workbench/test-results.xml
+            book_workbench/build/BookWorkbench/warn-BookWorkbench.txt
+          if-no-files-found: ignore

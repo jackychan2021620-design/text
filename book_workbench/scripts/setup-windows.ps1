@@ -9,5 +9,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Dependency validation failed' }
 & .\.venv\Scripts\python.exe scripts/setup_ocr.py
 if ($LASTEXITCODE -ne 0) { throw 'OCR model setup failed' }
 $env:QT_QPA_PLATFORM = 'offscreen'
-& .\.venv\Scripts\python.exe -m pytest -q
+& .\.venv\Scripts\python.exe -m pytest -q --junitxml=test-results.xml
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
