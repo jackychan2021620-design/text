@@ -1,0 +1,43 @@
+name: Book Workbench Original Artifact Security Audit
+on:
+  workflow_dispatch:
+  push:
+    branches: ['book-workbench-v1.1-20261105']
+    paths:
+      - '.github/workflows/book-workbench-security.yml'
+      - '.github/scripts/audit-book-workbench.ps1'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit-original-package:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify original artifact identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $meta = Invoke-RestMethod -Uri 'https://api.github.com/repos/jackychan2021620-design/text/actions/artifacts/13401944459' -Headers @{ Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json' }
+          if ($meta.name -ne 'BookWorkbench-Windows-x64' -or $meta.workflow_run.id -ne 42001014433 -or $meta.digest -ne 'sha256:7d926dd38c8e0a5b1958143910cb4e3e81c8b506594f4dcabd7eb2c963aa89d7' -or $meta.expired) { throw 'Original artifact provenance check failed' }
+          Write-Host 'Original artifact id, run id and SHA256 digest verified.'
+      - name: Download the exact previously delivered V1.1.1 package
+        uses: actions/download-artifact@v4
+        with:
+          name: BookWorkbench-Windows-x64
+          run-id: 42001014433
+          github-token: ${{ github.token }}
+          path: received
+      - name: Audit original checksums, signatures and Defender scans
+        shell: pwsh
+        run: ./.github/scripts/audit-book-workbench.ps1 -Received ./received
+      - name: Upload scan reports only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BookWorkbench-original-package-security-report
+          path: security-report/*
+          if-no-files-found: warn
+          retention-days: 30
