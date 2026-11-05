@@ -4,7 +4,7 @@
 
 ## Windows用户：直接运行
 
-V1.1.1修复版请在下方工作流中下载最新成功构建的 `BookWorkbench-Windows-x64` 附件（需要登录GitHub）。
+**[下载V1.1.1 Windows修复版](https://github.com/jackychan2021620-design/text/actions/runs/42001014433/artifacts/13401944459)**（外层ZIP约235MB，需要登录GitHub）。
 
 Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
 
