@@ -513,7 +513,7 @@ class MainWindow(QMainWindow):
         previous=button('上一页',lambda:change_page(-1));following=button('下一页',lambda:change_page(1));counter=label('');line.addWidget(counter);line.addStretch();line.addWidget(previous);line.addWidget(following);self.layout.addWidget(navigation)
         self.page_number=self.view_states.get(self.view_key,{}).get('_table',{}).get('page',0);self.visible=[]
         cols=[('id','ID'),*[(k,t) for k,t,kind,_ in SCHEMA[table][1] if kind not in ('long','curve','image','file')]]
-        view.setColumnCount(len(cols)+1);view.setHorizontalHeaderLabels([x[1] for x in cols]+['操作']);view.setColumnWidth(0,70)
+        view.setColumnCount(len(cols)+1);view.setHorizontalHeaderLabels([x[1] for x in cols]+['']);view.setColumnWidth(0,70);view.horizontalHeader().setStretchLastSection(False);view.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch)
         def update(reset=True):
             if self.table is not view:return
             if reset:self.page_number=0

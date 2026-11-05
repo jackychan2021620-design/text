@@ -53,6 +53,7 @@ def test_search_debounce_paging_and_switch_state(app,store):
     for i in range(125):record(store,'books',name=f'测试书{i:03}',category='科普')
     w=MainWindow(store);w.nav.setCurrentRow(1);w.show();QTest.qWait(220)
     assert w.table.rowCount()==50;assert len(w.visible)==50;assert w.table.frozen is not None
+    assert w.table.viewport().mapToGlobal(QPoint(0,0)).y()==w.table.frozen.viewport().mapToGlobal(QPoint(0,0)).y()
     w.search.setFocus()
     with patch.object(store,'page',wraps=store.page) as query:
         QTest.keyClicks(w.search,'123');assert query.call_count==0;assert w.table.rowCount()==50

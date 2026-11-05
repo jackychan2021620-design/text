@@ -134,6 +134,10 @@ class ActionDelegate(QStyledItemDelegate):
         painter.setPen(QColor('#779fe8' if hovered or pressed else '#dce0e6'));painter.setBrush(QColor('#cdddfb' if pressed else '#edf2fc' if hovered else '#ffffff'));painter.drawRoundedRect(rect,5,5)
         painter.setPen(QColor('#245bdb' if hovered or pressed else '#303846'));painter.drawText(rect,Qt.AlignmentFlag.AlignCenter,'编辑');painter.restore()
 
+class ActionHeader(QHeaderView):
+    def paintSection(self,painter,rect,index):
+        painter.save();painter.fillRect(rect,QColor('#f1f3f6'));painter.setPen(QColor('#677080'));painter.drawText(rect,Qt.AlignmentFlag.AlignCenter,'操作');painter.restore()
+
 class DataTable(QTableWidget):
     editRequested=Signal(int)
     def __init__(self,rows=0,columns=0,parent=None):
@@ -152,7 +156,7 @@ class DataTable(QTableWidget):
     def pin_actions(self,column):
         self.action_column=column
         if self.frozen:self.frozen.deleteLater()
-        view=QTableView(self);self.frozen=view;view.setModel(self.model());view.setSelectionModel(self.selectionModel())
+        view=QTableView(self);self.frozen=view;view.setStyleSheet('QTableView{padding:0;border:0;border-left:1px solid #e0e3e9;border-radius:0;}');view.setModel(self.model());view.setSelectionModel(self.selectionModel());view.setHorizontalHeader(ActionHeader(Qt.Orientation.Horizontal,view))
         view.setItemDelegate(ActionDelegate(view));view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows);view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         view.setFocusPolicy(Qt.FocusPolicy.StrongFocus);view.setMouseTracking(True);view.verticalHeader().hide();view.verticalHeader().setDefaultSectionSize(38)
         for c in range(self.columnCount()):view.setColumnHidden(c,c!=column)
@@ -175,7 +179,7 @@ class DataTable(QTableWidget):
         super().resizeEvent(event);self._place_actions()
     def _place_actions(self):
         if self.frozen:
-            rect=self.viewport().geometry();self.frozen.setGeometry(rect.right()-94,self.frameWidth(),95,rect.height()+self.horizontalHeader().height());self.frozen.raise_()
+            rect=self.viewport().geometry();self.frozen.setGeometry(rect.right()-94,self.horizontalHeader().geometry().top(),95,rect.height()+self.horizontalHeader().height());self.frozen.raise_()
 
 def clean_markdown(text):
     text=re.sub(r'(?m)^\s{0,3}#{1,6}\s+','',text)
