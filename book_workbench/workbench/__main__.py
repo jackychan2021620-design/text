@@ -2,7 +2,8 @@ import sys
 from PySide6.QtCore import QLockFile,QTimer
 from PySide6.QtWidgets import QApplication,QMessageBox
 from .store import Store,data_dir
-from .ui import MainWindow
+from .ui import MainWindow,Editor,OCRReviewDialog
+from . import APP_VERSION
 
 def main():
     app=QApplication(sys.argv);app.setApplicationName('图书带货智能选品工作台');app.setOrganizationName('BookWorkbench')
@@ -20,11 +21,27 @@ def main():
             import json
             import shutil
             from pathlib import Path
-            from .services import ocr,ocr_executable
+            from .services import ocr_document,ocr_executable
+            from .ocr_fields import propose_fields
             resources=(Path(sys._MEIPASS) if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1])/'resources'
-            sample=root/'packaged-ocr.png';shutil.copyfile(resources/'ocr-check.png',sample);text=ocr(sample)
+            sample=root/'packaged-ocr.png';shutil.copyfile(resources/'ocr-check.png',sample);doc=ocr_document(sample);text=doc['text']
             if '12345' not in text:raise ValueError('Packaged OCR failed functional check')
-            report={'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+            proposals=propose_fields(doc,'data_snapshots')
+            if proposals.get('creators',{}).get('value')!=100 or proposals.get('sales',{}).get('value')!=12345:
+                raise ValueError('Packaged OCR field extraction failed')
+            previous=store.setting('draft:data_snapshots:new','{}')
+            try:
+                store.settings({'draft:data_snapshots:new':json.dumps({'screenshot':str(sample),'notes':'diagnostic draft'})})
+                editor=Editor(store,'data_snapshots',parent=window)
+                if not editor.fields['product_id'].isEditable():raise ValueError('Product URL entry unavailable')
+                if not editor.fields['screenshot'].text().startswith('assets/'):raise ValueError('Legacy draft attachment was not recovered')
+                editor.reject()
+                reopened=Editor(store,'data_snapshots',parent=window);reopened.reject()
+                review=OCRReviewDialog('data_snapshots',proposals,{},sample,window,ocr_text=text)
+                review.apply()
+                if review.approved.get('sales')!=12345:raise ValueError('OCR review failed')
+            finally:store.settings({'draft:data_snapshots:new':previous})
+            report={'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
                     'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
             (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
             QTimer.singleShot(500,app.quit)

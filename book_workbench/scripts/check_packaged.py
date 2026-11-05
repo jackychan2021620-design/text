@@ -12,6 +12,9 @@ with sqlite3.connect(data/'books.sqlite3') as db:
     assert db.execute("SELECT count(*) FROM sqlite_master WHERE name='video_review_tasks'").fetchone()[0]==1
 report=json.loads((data/'packaged-smoke.json').read_text(encoding='utf-8'))
 print('Actual packaged smoke report:',report,flush=True)
+assert report['version']=='1.1.1',report
+assert report['collection_recovery'] is True,report
+assert report['ocr_fields']['creators']==100 and report['ocr_fields']['sales']==12345,report
 assert report['frozen'] is True,report
 assert report['platform']=='windows',report
 assert report['ocr_12345'] is True,report

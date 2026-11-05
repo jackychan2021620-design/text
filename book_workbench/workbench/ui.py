@@ -7,9 +7,10 @@ from pathlib import Path
 from PySide6.QtCore import Qt,QTimer,QUrl,QPropertyAnimation
 from PySide6.QtGui import QPixmap,QDesktopServices,QIcon,QPainter,QColor
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,
- QLineEdit,QTextEdit,QComboBox,QCheckBox,QDialog,QDialogButtonBox,QScrollArea,QTableWidget,QTableWidgetItem,
+ QLineEdit,QTextEdit,QComboBox,QCompleter,QCheckBox,QDialog,QDialogButtonBox,QScrollArea,QTableWidget,QTableWidgetItem,
  QHeaderView,QListWidget,QStackedWidget,QFileDialog,QMessageBox,QInputDialog,QSplitter,QSystemTrayIcon,QMenu,QGraphicsOpacityEffect)
 from .model import SCHEMA
+from . import APP_VERSION
 from .store import today,encode
 from .services import AIWorker,OCRWorker,api_key,save_key,endpoint,autorun,SYSTEM
 
@@ -50,13 +51,60 @@ def make_table(headers,rows):
         for j,v in enumerate(row):table.setItem(i,j,QTableWidgetItem(cell(v)))
     return table
 
+class OCRReviewDialog(QDialog):
+    """Suggestions are shown beside evidence; existing values are opt-in to overwrite."""
+    def __init__(self,table,proposals,current,image,parent=None,ocr_text=''):
+        super().__init__(parent);self.setWindowTitle('截图数据核对 · 确认后填入');self.resize(760,min(820,QApplication.primaryScreen().availableGeometry().height()-70))
+        self.inputs={};self.checks={};layout=QVBoxLayout(self)
+        layout.addWidget(label('识别值是待核对建议。千／万单位已换算；未可靠识别的字段留空，不以0代替。已有填写值默认不覆盖。'))
+        preview=QLabel();pix=QPixmap(str(image))
+        if not pix.isNull():preview.setPixmap(pix.scaled(650,min(240,QApplication.primaryScreen().availableGeometry().height()//4),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+        preview.setAlignment(Qt.AlignmentFlag.AlignCenter);layout.addWidget(preview)
+        layout.addWidget(button('打开原图核对',lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(image)))))
+        scroll=QScrollArea();scroll.setWidgetResizable(True);body=QWidget();form=QFormLayout(body);scroll.setWidget(body);layout.addWidget(scroll,1)
+        from .ocr_fields import LABELS
+        for key,title,_,_ in SCHEMA[table][1]:
+            if key not in LABELS.get(table,{}):continue
+            suggestion=proposals.get(key);check=QCheckBox('填入');check.setChecked(bool(suggestion) and not current.get(key))
+            value=QLineEdit(str(suggestion['value']) if suggestion else '')
+            value.textEdited.connect(lambda _,c=check:c.setChecked(True))
+            row=QWidget();l=QHBoxLayout(row);l.setContentsMargins(0,0,0,0);l.addWidget(check);l.addWidget(value)
+            form.addRow(title,row)
+            evidence=suggestion['source'] if suggestion else '未可靠识别，请对照截图手动填写或留空'
+            if current.get(key):evidence+='；当前填写：'+str(current[key])
+            form.addRow('',label(evidence));self.inputs[key]=value;self.checks[key]=check
+        if table=='advertising_records':layout.addWidget(label('实际成交GMV必须对照截图左上角金额；不能把广告GMV或后台ROI填入该字段。位置不明的成交金额不会自动填入。'))
+        if ocr_text:
+            layout.addWidget(label('整页识别全文（未匹配到字段的信息也会保存）'))
+            raw=QTextEdit();raw.setReadOnly(True);raw.setPlainText(ocr_text);raw.setMaximumHeight(130);layout.addWidget(raw)
+        self.notice=label('');layout.addWidget(self.notice)
+        self.buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('确认填入待核对字段')
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('暂不填入')
+        self.buttons.accepted.connect(self.apply);self.buttons.rejected.connect(self.reject);layout.addWidget(self.buttons)
+    def apply(self):
+        from .ocr_fields import numeric_value
+        self.approved={}
+        for key,field in self.inputs.items():
+            if not self.checks[key].isChecked():continue
+            value=numeric_value(field.text(),key)
+            if value is None:self.notice.setText('请填写有效非负数，人数、销量和订单必须是整数；无需填写的字段请取消勾选。');return
+            self.approved[key]=value
+        self.accept()
+
 class Editor(QDialog):
-    def __init__(self,store,table,record=None,parent=None):
-        super().__init__(parent);self.store=store;self.table=table;self.record=record or {};self.fields={};self.worker=None
+    def __init__(self,store,table,record=None,parent=None,initial=None):
+        super().__init__(parent);self.store=store;self.table=table;self.record=dict(record or {});self.fields={};self.worker=None
+        self.kinds={key:kind for key,_,kind,_ in SCHEMA[table][1]};self.relation_hints={};self.restore_notices=[]
+        self.read_only=bool(record and table in ('data_snapshots','advertising_records'))
         self.draft_key='draft:'+table+':'+str(self.record.get('id','new'))
-        if not record or table not in ('data_snapshots','advertising_records'):
-            self.record.update(json.loads(store.setting(self.draft_key,'{}')))
-        self.setWindowTitle(('查看快照' if record and table in ('data_snapshots','advertising_records') else '编辑')+' · '+SCHEMA[table][0]);self.resize(720,850)
+        if not self.read_only:
+            try:
+                draft=json.loads(store.setting(self.draft_key,'{}'))
+                if isinstance(draft,dict):self.record.update(draft)
+            except (TypeError,ValueError):self.restore_notices.append('旧草稿无法读取，已打开可编辑表单。')
+        if initial:self.record.update(initial)
+        self.setWindowTitle(('查看快照' if self.read_only else '编辑')+' · '+SCHEMA[table][0]);self.resize(820,min(900,QApplication.primaryScreen().availableGeometry().height()-70))
         outer=QVBoxLayout(self);scroll=QScrollArea();scroll.setWidgetResizable(True);body=QWidget();self.form=QFormLayout(body);scroll.setWidget(body);outer.addWidget(scroll)
         for key,title,kind,required in SCHEMA[table][1]:
             value=self.record.get(key)
@@ -68,64 +116,161 @@ class Editor(QDialog):
                 w=QComboBox();w.addItems(kind)
                 if value is not None:w.setCurrentText(str(value))
             elif kind in SCHEMA:
-                w=QComboBox();w.addItem('请选择',None)
-                for r in store.rows(kind):w.addItem(self.describe(kind,r),r['id'])
-                w.setCurrentIndex(max(0,w.findData(value)))
+                w=QComboBox();w.setMinimumContentsLength(24);w.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                if kind=='product_links':
+                    w.setEditable(True);w.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+                    w.lineEdit().setPlaceholderText('选择已有商品，或直接粘贴商品链接')
+                    w.completer().setFilterMode(Qt.MatchFlag.MatchContains);w.completer().setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+                self.fields[key]=w;self.reload_relation(key,value)
+                draft_text=self.record.get('_relation_text',{})
+                raw=draft_text.get(key) if isinstance(draft_text,dict) else None
+                if kind=='product_links' and raw and w.currentData() is None:w.setEditText(raw)
             elif kind=='bool':w=QCheckBox('已核对，允许保存');w.setChecked(bool(value))
             elif kind in ('long','curve'):
                 w=QTextEdit();w.setMaximumHeight(110);w.setPlainText(str(value or ''))
             else:w=QLineEdit('' if value is None else str(value))
             self.fields[key]=w
-            if kind in ('image','file'):
-                wrapper=QWidget();row=QHBoxLayout(wrapper);row.setContentsMargins(0,0,0,0);row.addWidget(w);row.addWidget(button('选择附件',lambda checked=False,k=key:self.pick(k)));self.form.addRow(title,wrapper)
+            if isinstance(kind,str) and kind in SCHEMA:
+                wrapper=QWidget();row=QHBoxLayout(wrapper);row.setContentsMargins(0,0,0,0);row.addWidget(w,1)
+                row.addWidget(button({'books':'新建图书','product_links':'新增商品链接','video_tests':'新增视频'}[kind],lambda checked=False,k=key:self.create_related(k)))
+                self.form.addRow(title+(' *' if required else ''),wrapper)
+                hint=label('');self.relation_hints[key]=hint;self.form.addRow('',hint);self.update_relation_hint(key)
+            elif kind in ('image','file'):
+                wrapper=QWidget();row=QHBoxLayout(wrapper);row.setContentsMargins(0,0,0,0);row.addWidget(w)
+                row.addWidget(button('选择附件',lambda checked=False,k=key:self.pick(k)))
+                row.addWidget(button('移除',lambda checked=False,k=key:self.remove_attachment(k)));self.form.addRow(title,wrapper)
             else:self.form.addRow(title+(' *' if required else ''),w)
         self.preview=QLabel();self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter);self.form.addRow(self.preview)
         if 'ocr_text' in self.fields:
-            self.ocr_button=button('识别原始截图 → 人工核对填写数值',self.recognize);self.form.addRow(self.ocr_button)
-            self.form.addRow(label('OCR文字是辅助证据，请核对每个字段，尤其左上角实际GMV。曲线请按每日销量录入，不能从截图像素猜测。'))
+            self.ocr_button=button('重新识别截图并核对指标',self.recognize);self.form.addRow(self.ocr_button)
+            self.form.addRow(label('选择截图后会自动识别并打开指标核对。人工确认填入后，还需勾选“已核对”再保存。销量曲线请按每日数据录入。'))
         self.notice=label('表单草稿自动保存；点击保存后进入正式档案。快照只能追加，不能覆盖。');outer.addWidget(self.notice)
-        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel);buttons.accepted.connect(self.save);buttons.rejected.connect(self.reject);outer.addWidget(buttons)
-        self.buttons=buttons
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText('保存');buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
+        buttons.accepted.connect(self.save);buttons.rejected.connect(self.reject);outer.addWidget(buttons);self.buttons=buttons
         self.draft_timer=QTimer(self);self.draft_timer.setSingleShot(True);self.draft_timer.timeout.connect(self.save_draft)
         for w in self.fields.values():
-            signal=w.currentIndexChanged if isinstance(w,QComboBox) else w.toggled if isinstance(w,QCheckBox) else w.textChanged
+            signal=(w.editTextChanged if w.isEditable() else w.currentIndexChanged) if isinstance(w,QComboBox) else w.toggled if isinstance(w,QCheckBox) else w.textChanged
             signal.connect(lambda *args:self.draft_timer.start(500))
-        if record and table in ('data_snapshots','advertising_records'):buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(False)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(not self.read_only)
         for key in ('cover','screenshot','media'):
-            if self.record.get(key):self.show_preview(self.store.asset(self.record[key]))
+            if key in self.fields and self.fields[key].text():self.restore_attachment(key)
+        if self.restore_notices:self.notice.setText('\n'.join(self.restore_notices))
     def describe(self,table,r):
         if table=='product_links':return f'#{r["id"]} '+self.store.get('books',r['book_id'])['name']+' · '+r['url']
         return f'#{r["id"]} '+str(r.get('name') or r.get('code') or '')
+    def reload_relation(self,key,id=None):
+        w=self.fields[key];kind=self.kinds[key];w.clear();w.addItem('' if w.isEditable() else '请选择',None)
+        for r in self.store.rows(kind):w.addItem(self.describe(kind,r),r['id'])
+        w.setCurrentIndex(max(0,w.findData(id)))
+    def update_relation_hint(self,key):
+        kind=self.kinds[key];empty=self.fields[key].count()==1
+        if kind=='product_links':text='暂无商品档案：可粘贴链接并保存，按提示补充图书；也可点击“新增商品链接”，在同一流程中新建图书。' if empty else '可选择已有商品或直接粘贴链接；新链接保存时会提示补充所属图书。'
+        else:text='暂无记录，请点击右侧按钮新建后继续。' if empty else '选择已有记录，或点击右侧按钮新增。'
+        self.relation_hints[key].setText(text)
+    def pasted_url(self,key):
+        import re
+        match=re.search(r'https?://[^\s<>"\u201c\u201d]+',self.fields[key].currentText())
+        return match[0].rstrip('，。；）)') if match else ''
+    def relation_value(self,key):
+        w=self.fields[key]
+        if not w.isEditable() or w.currentText()==w.itemText(w.currentIndex()):return w.currentData()
+        url=self.pasted_url(key)
+        matches=[r['id'] for r in self.store.rows('product_links') if r['url']==url] if url else []
+        return matches[0] if len(matches)==1 else None
+    def create_related(self,key):
+        kind=self.kinds[key];initial={}
+        if kind=='product_links' and self.fields[key].currentData() is None:
+            url=self.pasted_url(key)
+            if url:initial['url']=url
+        dialog=Editor(self.store,kind,parent=self,initial=initial)
+        if dialog.exec():
+            self.reload_relation(key,dialog.saved_id);self.update_relation_hint(key)
+            return True
+        return False
+    def remove_attachment(self,key):
+        self.fields[key].clear();self.preview.clear();self.notice.setText('已从当前表单移除附件；其他草稿内容保留，可重新选择。')
+    def restore_attachment(self,key):
+        value=self.fields[key].text()
+        try:
+            if value.startswith('assets/'):
+                path=self.store.asset(value)
+            else:
+                # Recover old versions' external-path drafts without treating them as assets.
+                path=Path(value)
+                if not path.is_absolute() or not path.is_file():raise ValueError('旧草稿的原图片已移动或删除')
+                if self.kinds[key]=='image' and QPixmap(str(path)).isNull():raise ValueError('旧草稿附件不是可读取的图片')
+                archived=self.store.attach(path);self.fields[key].setText(archived);path=self.store.asset(archived)
+            self.show_preview(path)
+        except (ValueError,OSError) as exc:
+            self.restore_notices.append(str(exc)+'。表单仍可编辑，请移除或重新选择附件；其他草稿内容已保留。')
+            self.preview.setText('附件无法预览，请移除或重选')
     def pick(self,key):
+        if self.worker and self.worker.isRunning():self.notice.setText('请等待当前识别结束后再更换截图。');return
         p,_=QFileDialog.getOpenFileName(self,'选择本地附件')
-        if p:self.fields[key].setText(p);self.show_preview(p)
+        if not p:return
+        try:
+            if self.kinds[key]=='image' and QPixmap(p).isNull():raise ValueError('无法读取这张图片，请选择PNG、JPG等图片文件')
+            archived=self.store.attach(p);self.fields[key].setText(archived);self.show_preview(self.store.asset(archived))
+            self.notice.setText('附件已复制到本地资料目录，原文件移动或删除不会影响草稿。')
+            if key=='screenshot':self.recognize()
+        except (ValueError,OSError) as exc:self.notice.setText(str(exc))
     def show_preview(self,path):
-        pix=QPixmap(str(path))
-        if not pix.isNull():self.preview.setPixmap(pix.scaled(380,210,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+        pix=QPixmap(str(path));self.preview.clear()
+        if not pix.isNull():self.preview.setPixmap(pix.scaled(500,230,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
+        else:self.preview.setText('附件已归档（非图片文件）')
     def recognize(self):
+        if self.worker and self.worker.isRunning():self.notice.setText('正在识别，请等待当前识别结束。');return
         try:
             path=self.fields['screenshot'].text()
-            if path.startswith('assets/'):path=str(self.store.asset(path))
-            if not Path(path).is_file():raise ValueError('请先选择截图')
-            self.worker=OCRWorker(path,self);self.worker.result.connect(lambda t:self.fields['ocr_text'].setPlainText(t));self.worker.failed.connect(self.notice.setText)
-            self.worker.finished.connect(lambda:self.ocr_button.setEnabled(True));self.ocr_button.setEnabled(False);self.worker.start()
-        except Exception as exc:self.notice.setText(str(exc))
+            if not path:raise ValueError('请先选择截图')
+            if not path.startswith('assets/'):
+                path=self.store.attach(path);self.fields['screenshot'].setText(path)
+            path=self.store.asset(path)
+            if 'confirmed' in self.fields:self.fields['confirmed'].setChecked(False)
+            self.ocr_source=self.fields['screenshot'].text()
+            self.worker=OCRWorker(str(path),self);self.worker.result.connect(self.got_ocr);self.worker.failed.connect(self.ocr_failed)
+            self.worker.finished.connect(lambda:self.ocr_button.setEnabled(True));self.ocr_button.setEnabled(False)
+            self.notice.setText('正在本地识别截图，完成后将打开数据核对；不会上传图片。');self.worker.start()
+        except (ValueError,OSError) as exc:self.notice.setText(str(exc))
+    def ocr_failed(self,text):self.notice.setText('截图识别未完成：'+text+'。可重新识别或手动填写；附件和草稿已保留。')
+    def got_ocr(self,document):
+        from .ocr_fields import propose_fields
+        if getattr(self,'ocr_source',self.fields['screenshot'].text())!=self.fields['screenshot'].text():
+            self.notice.setText('截图已更换或移除，未应用旧截图的识别结果。');return
+        if isinstance(document,str):document={'text':document}
+        self.fields['ocr_text'].setPlainText(document['text']);proposals=propose_fields(document,self.table)
+        review=OCRReviewDialog(self.table,proposals,self.values(),self.store.asset(self.fields['screenshot'].text()),self,ocr_text=document['text'])
+        if review.exec():
+            for key,value in review.approved.items():self.fields[key].setText(str(value))
+            if 'confirmed' in self.fields:self.fields['confirmed'].setChecked(False)
+            self.notice.setText(f'已填入 {len(review.approved)} 项待核对指标。请对照原图检查，勾选“已核对”后保存；未识别字段可手动填写。')
+        else:self.notice.setText('原始识别文字已保留，未改变数值。可重新识别或手动填写。')
     def values(self):
         out={}
         for key,_,kind,_ in SCHEMA[self.table][1]:
             w=self.fields[key]
             if isinstance(kind,list):v=w.currentText()
-            elif kind in SCHEMA:v=w.currentData()
+            elif kind in SCHEMA:v=self.relation_value(key)
             elif kind=='bool':v=int(w.isChecked())
             elif kind in ('long','curve'):v=w.toPlainText()
             else:v=w.text()
             out[key]=v
         return out
     def save_draft(self):
-        if not (self.record.get('id') and self.table in ('data_snapshots','advertising_records')):
-            self.store.settings({self.draft_key:encode(self.values())})
+        if not self.read_only:
+            values=self.values();values['_relation_text']={key:w.currentText() for key,w in self.fields.items() if isinstance(w,QComboBox) and w.isEditable() and self.relation_value(key) is None}
+            self.store.settings({self.draft_key:encode(values)})
     def save(self):
+        if self.worker and self.worker.isRunning():self.notice.setText('识别进行中，请先核对识别结果再保存。');return
         try:
+            for key,kind in self.kinds.items():
+                if kind=='product_links' and self.relation_value(key) is None:
+                    url=self.pasted_url(key)
+                    if not url:raise ValueError('请选择已有商品，或粘贴完整商品链接；没有商品时可点击“新增商品链接”当场建档。')
+                    matches=[r for r in self.store.rows('product_links') if r['url']==url]
+                    if len(matches)>1:raise ValueError('这个链接有多个商品档案，请从列表选择所属图书对应的商品。')
+                    if not self.create_related(key):self.notice.setText('已保留采集草稿，请先补充该链接的所属图书再保存。');return
             self.saved_id=self.store.save(self.table,self.values(),self.record.get('id'));self.draft_timer.stop()
             self.store.settings({self.draft_key:'{}'});self.accept()
         except Exception as exc:self.notice.setText(str(exc))
@@ -139,7 +284,7 @@ class Editor(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self,store):
         super().__init__();self.store=store;self.runtime_key='';self.worker=None;self.ai_id=None;self.quitting=False
-        self.setWindowTitle('图书带货智能选品工作台 · V1.1');self.resize(1550,950);self.setMinimumSize(1100,700)
+        self.setWindowTitle('图书带货智能选品工作台 · V'+APP_VERSION);self.resize(1550,950);self.setMinimumSize(1100,700)
         self.setStyleSheet(STYLE);root=QSplitter();self.setCentralWidget(root)
         self.nav=QListWidget();self.nav.addItems(['工作台首页','01 图书数据库','02 数据采集中心','03 选品分析引擎','04 多商品对比','05 AI选品顾问','06 视频投放与复盘','07 历史复盘','设置与备份']);root.addWidget(self.nav)
         self.center=QWidget();self.layout=QVBoxLayout(self.center);self.layout.setContentsMargins(24,24,24,24);root.addWidget(self.center)

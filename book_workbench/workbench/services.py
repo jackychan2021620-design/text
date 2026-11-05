@@ -1,4 +1,6 @@
 import os
+import csv
+import tempfile
 import re
 import shutil
 import subprocess
@@ -58,23 +60,37 @@ def ocr_executable():
     if not command:raise ValueError('未找到OCR引擎。源码开发需安装Tesseract 5；Windows发行包请完整解压后运行。')
     return command
 
-def ocr(path):
+def ocr_document(path):
     command=ocr_executable()
     local=(Path(sys._MEIPASS) if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1])/'.ocr'/'tessdata'
     data_args=['--tessdata-dir',str(local)] if (local/'chi_sim.traineddata').exists() else []
     startup={'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}
     langs=subprocess.run([command,*data_args,'--list-langs'],capture_output=True,text=True,timeout=15,check=True,**startup).stdout
     if 'chi_sim' not in langs:raise ValueError('缺少中文OCR模型；请完整解压发行包或运行源码的setup_ocr.py。')
-    r=subprocess.run([command,str(path),'stdout',*data_args,'-l','chi_sim+eng','--psm','6'],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=90,**startup)
-    if r.returncode:raise ValueError('OCR识别失败，请检查图片与语言模型')
-    if not r.stdout.strip():raise ValueError('没有识别到文字，请手动核对录入')
-    return r.stdout
+    with tempfile.TemporaryDirectory(prefix='book-ocr-') as folder:
+        base=Path(folder)/'result'
+        r=subprocess.run([command,str(path),str(base),*data_args,'-l','chi_sim+eng','--psm','6',
+                          '-c','tessedit_create_txt=1','-c','tessedit_create_tsv=1'],
+                         capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=90,**startup)
+        if r.returncode:raise ValueError('OCR识别失败，请检查图片与语言模型')
+        text=base.with_suffix('.txt').read_text(encoding='utf-8')
+        if not text.strip():raise ValueError('没有识别到文字，请手动核对录入')
+        words=[]
+        with base.with_suffix('.tsv').open(encoding='utf-8',newline='') as source:
+            for row in csv.DictReader(source,delimiter='\t',quoting=csv.QUOTE_NONE):
+                if row.get('text','').strip():
+                    words.append({'text':row['text'],'conf':float(row['conf']),
+                                  **{k:int(row[k]) for k in ('left','top','width','height','page_num','block_num','par_num','line_num')}})
+        return {'text':text,'words':words}
+
+def ocr(path):
+    return ocr_document(path)['text']
 
 class OCRWorker(QThread):
-    result=Signal(str);failed=Signal(str)
+    result=Signal(object);failed=Signal(str)
     def __init__(self,path,parent=None):super().__init__(parent);self.path=path
     def run(self):
-        try:self.result.emit(ocr(self.path))
+        try:self.result.emit(ocr_document(self.path))
         except Exception as exc:self.failed.emit(str(exc))
 
 class AIWorker(QThread):
