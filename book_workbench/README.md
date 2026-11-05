@@ -7,7 +7,7 @@
 
 ## Windows用户：直接运行
 
-V1.1.3修复“已有快照不能保存”，移除界面的识别文本输入框，并将销量曲线改为图表。下载入口在Windows构建通过后更新。
+**[下载V1.1.3 Windows程序包](https://github.com/jackychan2021620-design/text/actions/runs/42021176805/artifacts/13411203708)**（需要登录GitHub）。本版修复已有快照保存，移除识别文本输入框，销量曲线直接绘制为图表。已通过Windows测试和Defender扫描；仍未正式签名，也未确认Chrome解除拦截。
 
 Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
 
