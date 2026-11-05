@@ -7,7 +7,7 @@
 
 ## Windows用户：直接运行
 
-V1.1.2新增中文目录OCR修复、长截图分段识别及蓝色曲线读图估算。下载入口在构建及扫描通过后更新。
+**[下载V1.1.2 Windows程序包](https://github.com/jackychan2021620-design/text/actions/runs/42014220139/artifacts/13409001449)**（需要登录GitHub）。本版修复中文目录OCR、支持手机长截图分段识别及蓝色曲线读图估算，已通过Windows测试和Defender扫描。未取得Chrome侧解除拦截结论；扫描不是安全保证。
 
 Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
 
