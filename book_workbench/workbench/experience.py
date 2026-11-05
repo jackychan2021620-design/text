@@ -24,7 +24,7 @@ def reduced_motion():
 
 def selectable(text,parent=None):
     w=QLabel(str(text),parent);w.setWordWrap(True);w.setTextFormat(Qt.TextFormat.PlainText)
-    w.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse|Qt.TextInteractionFlag.TextSelectableByKeyboard)
+    w.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse|Qt.TextInteractionFlag.TextSelectableByKeyboard);w.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
     return w
 
 class FeedbackButton(QPushButton):
@@ -105,7 +105,7 @@ class InteractionPolicy(QObject):
             obj.setDown(True);obj.repaint()
         if event.type()==QEvent.Type.Polish:
             if isinstance(obj,QLabel) and obj.pixmap().isNull():
-                obj.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse|Qt.TextInteractionFlag.TextSelectableByKeyboard)
+                obj.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse|Qt.TextInteractionFlag.TextSelectableByKeyboard);obj.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
             if isinstance(obj,(QLineEdit,QTextEdit,QPlainTextEdit)) and not obj.property('smoothContextMenu'):
                 obj.setProperty('smoothContextMenu',True);obj.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu);obj.customContextMenuRequested.connect(lambda point,w=obj:text_context_menu(w,point))
             if isinstance(obj,QAbstractButton):obj.setCursor(Qt.CursorShape.PointingHandCursor)

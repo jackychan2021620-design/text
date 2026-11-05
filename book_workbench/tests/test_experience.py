@@ -40,7 +40,9 @@ def test_dialog_transition_focus_and_reduced_motion(app,monkeypatch):
 
 
 def test_form_inline_validation_and_escape_restores_draft(app,store):
-    d=Editor(store,'books');d.show();QTest.qWait(220);d.fields['name'].clear();d.save()
+    d=Editor(store,'books');d.show();QTest.qWait(220)
+    assert app.focusWidget() is d.fields['name'];QTest.keyClick(d.fields['name'],Qt.Key.Key_Tab);assert app.focusWidget() is d.fields['author']
+    d.fields['name'].clear();d.save()
     assert d.errors['name'].text();assert d.fields['name'].property('invalid');assert not store.rows('books')
     d.fields['name'].setText('保留草稿');assert not d.fields['name'].property('invalid')
     QTest.keyClick(d.fields['name'],Qt.Key.Key_Escape);QTest.qWait(220)
