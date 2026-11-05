@@ -55,7 +55,7 @@ class OCRReviewDialog(QDialog):
     """Suggestions are shown beside evidence; existing values are opt-in to overwrite."""
     def __init__(self,table,proposals,current,image,parent=None,ocr_text=''):
         super().__init__(parent);self.setWindowTitle('截图数据核对 · 确认后填入');self.resize(760,min(820,QApplication.primaryScreen().availableGeometry().height()-70))
-        self.inputs={};self.checks={};layout=QVBoxLayout(self)
+        self.inputs={};self.checks={};self.curve_result=None;self.image_path=image;self.words=[];layout=QVBoxLayout(self)
         layout.addWidget(label('识别值是待核对建议。千／万单位已换算；未可靠识别的字段留空，不以0代替。已有填写值默认不覆盖。'))
         preview=QLabel();pix=QPixmap(str(image))
         if not pix.isNull():preview.setPixmap(pix.scaled(650,min(240,QApplication.primaryScreen().availableGeometry().height()//4),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
@@ -64,16 +64,20 @@ class OCRReviewDialog(QDialog):
         scroll=QScrollArea();scroll.setWidgetResizable(True);body=QWidget();form=QFormLayout(body);scroll.setWidget(body);layout.addWidget(scroll,1)
         from .ocr_fields import LABELS
         for key,title,_,_ in SCHEMA[table][1]:
-            if key not in LABELS.get(table,{}):continue
-            suggestion=proposals.get(key);check=QCheckBox('填入');check.setChecked(bool(suggestion) and not current.get(key))
+            if key not in LABELS.get(table,{}) and not (key=='period_days' and key in proposals):continue
+            suggestion=proposals.get(key);check=QCheckBox('填入');check.setChecked(bool(suggestion) and not current.get(key) and not suggestion.get('warning'))
             value=QLineEdit(str(suggestion['value']) if suggestion else '')
             value.textEdited.connect(lambda _,c=check:c.setChecked(True))
             row=QWidget();l=QHBoxLayout(row);l.setContentsMargins(0,0,0,0);l.addWidget(check);l.addWidget(value)
             form.addRow(title,row)
             evidence=suggestion['source'] if suggestion else '未可靠识别，请对照截图手动填写或留空'
+            if suggestion and suggestion.get('warning'):evidence+='；'+suggestion['warning']
             if current.get(key):evidence+='；当前填写：'+str(current[key])
             form.addRow('',label(evidence));self.inputs[key]=value;self.checks[key]=check
         if table=='advertising_records':layout.addWidget(label('实际成交GMV必须对照截图左上角金额；不能把广告GMV或后台ROI填入该字段。位置不明的成交金额不会自动填入。'))
+        if table=='data_snapshots':
+            self.curve_info=label('销量曲线需要读图和坐标校准，不能由文字OCR自动恢复精确日销量。');layout.addWidget(self.curve_info)
+            layout.addWidget(button('提取销量曲线（需核对坐标）',self.open_curve))
         if ocr_text:
             layout.addWidget(label('整页识别全文（未匹配到字段的信息也会保存）'))
             raw=QTextEdit();raw.setReadOnly(True);raw.setPlainText(ocr_text);raw.setMaximumHeight(130);layout.addWidget(raw)
@@ -82,6 +86,11 @@ class OCRReviewDialog(QDialog):
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('确认填入待核对字段')
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('暂不填入')
         self.buttons.accepted.connect(self.apply);self.buttons.rejected.connect(self.reject);layout.addWidget(self.buttons)
+    def open_curve(self):
+        from .curve_ui import CurveDialog
+        dialog=CurveDialog(self.image_path,self.words,parent=self)
+        if dialog.exec():
+            self.curve_result=dialog.result_data;self.curve_info.setText(f'已准备{len(self.curve_result["values"])}个读图估算趋势点；确认后写入曲线并在备注标明来源。')
     def apply(self):
         from .ocr_fields import numeric_value
         self.approved={}
@@ -143,7 +152,7 @@ class Editor(QDialog):
         self.preview=QLabel();self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter);self.form.addRow(self.preview)
         if 'ocr_text' in self.fields:
             self.ocr_button=button('重新识别截图并核对指标',self.recognize);self.form.addRow(self.ocr_button)
-            self.form.addRow(label('选择截图后会自动识别并打开指标核对。人工确认填入后，还需勾选“已核对”再保存。销量曲线请按每日数据录入。'))
+            self.form.addRow(label('选择截图后会自动识别并打开指标核对。人工确认填入后，还需勾选“已核对”再保存。曲线可手工录入，或读图提取并校准；估算来源会写入备注。'))
         self.notice=label('表单草稿自动保存；点击保存后进入正式档案。快照只能追加，不能覆盖。');outer.addWidget(self.notice)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setText('保存');buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('取消')
@@ -241,8 +250,12 @@ class Editor(QDialog):
         if isinstance(document,str):document={'text':document}
         self.fields['ocr_text'].setPlainText(document['text']);proposals=propose_fields(document,self.table)
         review=OCRReviewDialog(self.table,proposals,self.values(),self.store.asset(self.fields['screenshot'].text()),self,ocr_text=document['text'])
+        review.words=document.get('words',[])
         if review.exec():
             for key,value in review.approved.items():self.fields[key].setText(str(value))
+            if review.curve_result and 'curve' in self.fields:
+                self.fields['curve'].setPlainText(encode(review.curve_result['values']))
+                previous=self.fields['notes'].toPlainText();self.fields['notes'].setPlainText(previous+('\n' if previous else '')+review.curve_result['note'])
             if 'confirmed' in self.fields:self.fields['confirmed'].setChecked(False)
             self.notice.setText(f'已填入 {len(review.approved)} 项待核对指标。请对照原图检查，勾选“已核对”后保存；未识别字段可手动填写。')
         else:self.notice.setText('原始识别文字已保留，未改变数值。可重新识别或手动填写。')

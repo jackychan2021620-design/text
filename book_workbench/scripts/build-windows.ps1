@@ -27,14 +27,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw ('Packaged validation failed: ' + ($packageCheck -join "`n")) }
 } finally { Remove-Item Env:BOOK_WORKBENCH_DATA_DIR -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force dist\downloads | Out-Null
-Compress-Archive -Path dist\BookWorkbench -DestinationPath dist\downloads\BookWorkbench-1.1.1-Windows-x64-portable.zip -Force
+Compress-Archive -Path dist\BookWorkbench -DestinationPath dist\downloads\BookWorkbench-1.1.2-Windows-x64-portable.zip -Force
 $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
 if (-not (Test-Path $iscc)) { throw 'Inno Setup 6 required' }
 & $iscc scripts\installer.iss
 if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
 # Validate silent install into a temporary directory and run the installed app.
-$installer = (Resolve-Path dist\installer\BookWorkbench-Setup-1.1.1-Windows-x64.exe).Path
-$installRoot = Join-Path $env:TEMP ('book-workbench-installed-' + [guid]::NewGuid())
+$installer = (Resolve-Path dist\installer\BookWorkbench-Setup-1.1.2-Windows-x64.exe).Path
+$installRoot = Join-Path $env:TEMP ('中文安装路径-图书工作台-' + [guid]::NewGuid())
 $process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$installRoot`"",'/TASKS=' -PassThru -Wait
 if ($process.ExitCode -ne 0) { throw 'Installer execution failed' }
 $env:BOOK_WORKBENCH_DATA_DIR = Join-Path $env:TEMP ('book-workbench-installed-data-' + [guid]::NewGuid())
@@ -42,7 +42,7 @@ try {
     $process = Start-Process -FilePath (Join-Path $installRoot 'BookWorkbench.exe') -ArgumentList '--smoke-test' -PassThru
     if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Installed app smoke test timed out' }
     if ($process.ExitCode -ne 0) { throw 'Installed app startup failed' }
-    & .\.venv\Scripts\python.exe scripts/check_packaged.py $installRoot $env:BOOK_WORKBENCH_DATA_DIR 2>&1 | Tee-Object -Variable installCheck
+    & .\.venv\Scripts\python.exe scripts/check_packaged.py $installRoot $env:BOOK_WORKBENCH_DATA_DIR --require-unicode 2>&1 | Tee-Object -Variable installCheck
     if ($LASTEXITCODE -ne 0) { throw ('Installed app validation failed: ' + ($installCheck -join "`n")) }
 } finally { Remove-Item Env:BOOK_WORKBENCH_DATA_DIR -ErrorAction SilentlyContinue }
 Copy-Item $installer dist\downloads\

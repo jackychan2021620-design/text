@@ -22,7 +22,7 @@ def product(snapshot, peers=()):
     import json
     curve=json.loads(s['curve'] or '[]') if isinstance(s['curve'],str) else (s['curve'] or [])
     rate=ratio(o,c);per_seller=ratio(sales,o);per_creator=ratio(sales,c);shape=trend(curve)
-    result={'达人出单率':rate,'出单达人人均销量':per_seller,'参与达人人均销量':per_creator,'销量趋势':shape}
+    result={'达人出单率':rate,'出单达人人均销量':per_seller,'参与达人人均销量':per_creator,'销量趋势':shape,'曲线来源':'读图估算，仅趋势参考' if '【曲线读图估算】' in (s.get('notes') or '') else '用户录入或未提供曲线'}
     valid=[p for p in peers if p.get('sales') is not None and p.get('creators') and p.get('sellers') is not None]
     if s['period_days']!=90 or rate is None or sales is None:
         result.update(等级='数据不足',不确定因素='需要90天统计及有效带货人数、出单人数、销量');return result

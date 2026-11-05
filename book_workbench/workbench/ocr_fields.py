@@ -22,7 +22,7 @@ LABELS={
         'estimated_commission':('预估佣金',),'settled_commission':('最终结算佣金',),
     },
 }
-INTEGER_FIELDS={'creators','sellers','sales','impressions','clicks','orders'}
+INTEGER_FIELDS={'period_days','creators','sellers','sales','impressions','clicks','orders'}
 NUMBER=r'(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:万|亿|千|[wWkK])?'
 
 def normalized(text):
@@ -123,7 +123,7 @@ def geometry_proposals(words,table):
         items.sort();best=items[0]
         if len(items)>1 and abs(items[1][0]-best[0])<.15:continue
         score,i,_,value=best;field,label,_,_=labels[i]
-        candidates[field].append((score,{'value':value,'source':label+' '+numbers[j][0]}))
+        candidates[field].append((score,{'value':value,'source':label+' '+numbers[j][0],'label_y':labels[i][2][1],'value_y':numbers[j][1][1]}))
     out={}
     for field,items in candidates.items():
         items.sort(key=lambda x:x[0]);best=items[0]
@@ -139,4 +139,35 @@ def propose_fields(document,table):
     for key,value in geometric.items():
         if key in direct and direct[key]['value']!=value['value']:direct.pop(key)
         else:direct[key]=value
+    if table=='data_snapshots':
+        section=snapshot_section(document.get('words',[]),document.get('image_size'))
+        if section:
+            regional=[w for w in document.get('words',[]) if section['top']<=w['top']<section['bottom']]
+            inside=geometry_proposals(regional,table)
+            for key in ('creators','sellers','sales'):
+                if key in inside:
+                    direct[key]=inside[key];direct[key]['source']+=f"（带货数据{section['days']}天）"
+                elif key in direct:
+                    direct[key]['warning']='该指标位于其他区域或周期无法确认，不会默认填入；请先核对统计范围'
+            direct['period_days']={'value':section['days'],'source':f"截图数据区标注{section['days']}天，请核对本次统计周期"}
     return direct
+
+
+def snapshot_section(words,image_size=None):
+    lines=defaultdict(list)
+    for word in words:
+        key=tuple(word.get(k,0) for k in ('page_num','block_num','par_num','line_num'))
+        lines[key].append(word)
+    headers=[];ends=[]
+    for line in lines.values():
+        text=''.join(normalized(w['text']) for w in sorted(line,key=lambda w:w['left']))
+        top=min(w['top'] for w in line)
+        if '带货数据' in text:
+            match=re.search(r'(\d{1,3})天',text)
+            if match:headers.append((top,int(match[1])))
+        if '受众数据' in text:ends.append(top)
+    if not headers:return None
+    top,days=headers[0]
+    if not days:return None
+    bottom=min((y for y in ends if y>top),default=(image_size[1] if image_size else float('inf')))
+    return {'top':top,'bottom':bottom,'days':days}

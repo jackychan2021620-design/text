@@ -6,6 +6,7 @@ on:
     paths:
       - 'book_workbench/**'
       - '.github/workflows/book-workbench-windows.yml'
+      - '.github/scripts/scan-built-package.ps1'
 permissions:
   contents: read
 concurrency:
@@ -67,6 +68,8 @@ jobs:
                           message=message.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
                           print('::error title='+case.get('name','Test failure')+'::'+message)
           '@ | & '.\.venv\Scripts\python.exe' -
+      - name: Scan installer and expanded program with Microsoft Defender
+        run: ../.github/scripts/scan-built-package.ps1 -Packages ./dist/downloads -Expanded ./dist/BookWorkbench
       - name: Upload runnable Windows installer and portable package
         uses: actions/upload-artifact@v4
         with:
@@ -81,6 +84,7 @@ jobs:
         with:
           name: BookWorkbench-Windows-diagnostics
           path: |
+            book_workbench/defender-scan-*
             book_workbench/build-output.log
             book_workbench/test-results.xml
             book_workbench/build/BookWorkbench/warn-BookWorkbench.txt

@@ -1,5 +1,7 @@
 import os
 import csv
+import io
+import time
 import tempfile
 import re
 import shutil
@@ -60,28 +62,67 @@ def ocr_executable():
     if not command:raise ValueError('未找到OCR引擎。源码开发需安装Tesseract 5；Windows发行包请完整解压后运行。')
     return command
 
-def ocr_document(path):
-    command=ocr_executable()
+def ocr_model_folder(command):
     local=(Path(sys._MEIPASS) if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1])/'.ocr'/'tessdata'
-    data_args=['--tessdata-dir',str(local)] if (local/'chi_sim.traineddata').exists() else []
+    if (local/'chi_sim.traineddata').is_file():return local
+    candidates=[Path(command).parent/'tessdata',Path('/usr/share/tesseract-ocr/5/tessdata')]
+    if os.environ.get('TESSDATA_PREFIX'):candidates.insert(0,Path(os.environ['TESSDATA_PREFIX']))
+    for folder in candidates:
+        if (folder/'chi_sim.traineddata').is_file():return folder
+    raise ValueError('找不到中文OCR模型，请完整解压发行包，源码开发请运行setup_ocr.py')
+
+def ocr_document(path):
+    from .image_io import read_image,png_bytes,image_tiles
+    command=str(Path(ocr_executable()).resolve());folder=ocr_model_folder(command)
+    # Native Tesseract builds can mishandle non-ASCII argv paths on Windows.
+    # CreateProcess receives a Unicode cwd, while all engine file arguments are
+    # relative ASCII. Input/output flow through pipes, not user-named temp files.
+    data_args=['--tessdata-dir','.']
     startup={'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}
-    langs=subprocess.run([command,*data_args,'--list-langs'],capture_output=True,text=True,timeout=15,check=True,**startup).stdout
-    if 'chi_sim' not in langs:raise ValueError('缺少中文OCR模型；请完整解压发行包或运行源码的setup_ocr.py。')
-    with tempfile.TemporaryDirectory(prefix='book-ocr-') as folder:
-        base=Path(folder)/'result'
-        r=subprocess.run([command,str(path),str(base),*data_args,'-l','chi_sim+eng','--psm','6',
-                          '-c','tessedit_create_txt=1','-c','tessedit_create_tsv=1'],
-                         capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=90,**startup)
-        if r.returncode:raise ValueError('OCR识别失败，请检查图片与语言模型')
-        text=base.with_suffix('.txt').read_text(encoding='utf-8')
-        if not text.strip():raise ValueError('没有识别到文字，请手动核对录入')
-        words=[]
-        with base.with_suffix('.tsv').open(encoding='utf-8',newline='') as source:
-            for row in csv.DictReader(source,delimiter='\t',quoting=csv.QUOTE_NONE):
-                if row.get('text','').strip():
-                    words.append({'text':row['text'],'conf':float(row['conf']),
-                                  **{k:int(row[k]) for k in ('left','top','width','height','page_num','block_num','par_num','line_num')}})
-        return {'text':text,'words':words}
+    common={'cwd':str(folder),'capture_output':True,**startup}
+    listed=subprocess.run([command,*data_args,'--list-langs'],timeout=15,**common)
+    if listed.returncode:
+        detail=listed.stderr.decode('utf-8',errors='replace').strip()[-800:]
+        raise ValueError(f'OCR语言包检查失败（退出码{listed.returncode}）：{detail or "语言包目录无法读取"}')
+    if 'chi_sim' not in listed.stdout.decode('utf-8',errors='replace'):raise ValueError('语言包目录缺少chi_sim中文模型')
+    image=read_image(path);words=[];seen={};deadline=time.monotonic()+90;tile_count=0
+    for index,top,scale,tile in image_tiles(image):
+        remaining=deadline-time.monotonic()
+        if remaining<=0:raise ValueError('截图识别超时，请只截取带货数据区域后重试')
+        result=subprocess.run([command,'stdin','stdout',*data_args,'-l','chi_sim+eng','--psm','6',
+                               '-c','tessedit_create_txt=0','-c','tessedit_create_tsv=1'],
+                              input=png_bytes(tile),timeout=remaining,**common)
+        if result.returncode:
+            detail=result.stderr.decode('utf-8',errors='replace').strip()[-800:]
+            raise ValueError(f'OCR识别失败（退出码{result.returncode}）：{detail or "引擎未返回结果"}')
+        tile_count+=1
+        reader=csv.DictReader(io.StringIO(result.stdout.decode('utf-8-sig',errors='replace')),delimiter='\t',quoting=csv.QUOTE_NONE)
+        for row in reader:
+            if not (row.get('text') or '').strip():continue
+            word={'text':row['text'],'conf':float(row['conf']),
+                  **{k:int(row[k]) for k in ('page_num','block_num','par_num','line_num')}}
+            word.update(left=int(int(row['left'])/scale),top=top+int(int(row['top'])/scale),
+                        width=max(1,int(int(row['width'])/scale)),height=max(1,int(int(row['height'])/scale)))
+            word['block_num']+=index*100000
+            key=word['text'].strip();duplicates=seen.setdefault(key,[])
+            old=next((i for i in duplicates if abs(words[i]['top']-word['top'])<max(3,word['height']*.4) and abs(words[i]['left']-word['left'])<max(3,word['width']*.3)),None)
+            if old is not None:
+                if word['conf']>words[old]['conf']:words[old]=word
+            else:duplicates.append(len(words));words.append(word)
+    if not words:raise ValueError('没有识别到文字，请截取清晰的数据区域后重试；原图与草稿已保留')
+    # Overlap deduplication can retain words from different native OCR blocks.
+    # Rebuild physical rows so a label is not split merely by a tile boundary.
+    from statistics import median
+    ordered=[]
+    for word in sorted(words,key=lambda w:(w['top']+w['height']/2,w['left'])):
+        center=word['top']+word['height']/2
+        matching=next((line for line in reversed(ordered[-4:]) if abs(center-median(w['top']+w['height']/2 for w in line))<=max(3,min(word['height'],median(w['height'] for w in line))*.6)),None)
+        if matching is None:ordered.append([word])
+        else:matching.append(word)
+    for index,line in enumerate(ordered):
+        for word in line:word.update(page_num=1,block_num=1,par_num=1,line_num=index+1)
+    text='\n'.join(' '.join(w['text'] for w in sorted(line,key=lambda w:w['left'])) for line in ordered)+'\n'
+    return {'text':text,'words':words,'image_size':[image.width(),image.height()],'tile_count':tile_count}
 
 def ocr(path):
     return ocr_document(path)['text']
@@ -91,6 +132,7 @@ class OCRWorker(QThread):
     def __init__(self,path,parent=None):super().__init__(parent);self.path=path
     def run(self):
         try:self.result.emit(ocr_document(self.path))
+        except subprocess.TimeoutExpired:self.failed.emit('OCR处理超时，请只截取数据区域重试；原图和草稿保留。')
         except Exception as exc:self.failed.emit(str(exc))
 
 class AIWorker(QThread):

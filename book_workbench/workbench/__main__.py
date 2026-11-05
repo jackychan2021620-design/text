@@ -41,7 +41,9 @@ def main():
                 review.apply()
                 if review.approved.get('sales')!=12345:raise ValueError('OCR review failed')
             finally:store.settings({'draft:data_snapshots:new':previous})
-            report={'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+            from .curve_ui import CurveDialog
+            curve_probe=CurveDialog(resources/'mobile-layout-test.png',parent=window);curve_probe.reject()
+            report={'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
                     'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
             (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
             QTimer.singleShot(500,app.quit)
