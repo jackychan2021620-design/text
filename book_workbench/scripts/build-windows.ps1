@@ -23,8 +23,8 @@ try {
     $process = Start-Process -FilePath '.\dist\BookWorkbench\BookWorkbench.exe' -ArgumentList '--smoke-test' -PassThru
     if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Packaged smoke test timed out' }
     if ($process.ExitCode -ne 0) { throw 'Packaged startup failed' }
-    & .\.venv\Scripts\python.exe scripts/check_packaged.py dist/BookWorkbench $env:BOOK_WORKBENCH_DATA_DIR
-    if ($LASTEXITCODE -ne 0) { throw 'Packaged database, OCR or isolation validation failed' }
+    & .\.venv\Scripts\python.exe scripts/check_packaged.py dist/BookWorkbench $env:BOOK_WORKBENCH_DATA_DIR 2>&1 | Tee-Object -Variable packageCheck
+    if ($LASTEXITCODE -ne 0) { throw ('Packaged validation failed: ' + ($packageCheck -join "`n")) }
 } finally { Remove-Item Env:BOOK_WORKBENCH_DATA_DIR -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force dist\downloads | Out-Null
 Compress-Archive -Path dist\BookWorkbench -DestinationPath dist\downloads\BookWorkbench-1.1.0-Windows-x64-portable.zip -Force
@@ -42,8 +42,8 @@ try {
     $process = Start-Process -FilePath (Join-Path $installRoot 'BookWorkbench.exe') -ArgumentList '--smoke-test' -PassThru
     if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Installed app smoke test timed out' }
     if ($process.ExitCode -ne 0) { throw 'Installed app startup failed' }
-    & .\.venv\Scripts\python.exe scripts/check_packaged.py $installRoot $env:BOOK_WORKBENCH_DATA_DIR
-    if ($LASTEXITCODE -ne 0) { throw 'Installed app validation failed' }
+    & .\.venv\Scripts\python.exe scripts/check_packaged.py $installRoot $env:BOOK_WORKBENCH_DATA_DIR 2>&1 | Tee-Object -Variable installCheck
+    if ($LASTEXITCODE -ne 0) { throw ('Installed app validation failed: ' + ($installCheck -join "`n")) }
 } finally { Remove-Item Env:BOOK_WORKBENCH_DATA_DIR -ErrorAction SilentlyContinue }
 Copy-Item $installer dist\downloads\
 Get-ChildItem dist\downloads\* | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $([System.IO.Path]::GetFileName($_.Path))" } | Set-Content -Encoding ascii dist\downloads\SHA256SUMS.txt

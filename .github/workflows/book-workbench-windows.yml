@@ -46,7 +46,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Build script exited with code $LASTEXITCODE" }
           } catch {
             $detail = $_.Exception.Message + "`n" + $_.InvocationInfo.PositionMessage
-            if (Test-Path build-output.log) { $detail += "`n" + ((Get-Content build-output.log -Tail 60) -join "`n") }
+            if (Test-Path build-output.log) { $detail += "`n" + ((Get-Content build-output.log -Tail 12) -join "`n") }
             $detail = $detail.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
             Write-Host "::error title=Windows build details::$detail"
             throw

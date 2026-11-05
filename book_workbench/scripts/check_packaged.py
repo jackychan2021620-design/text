@@ -11,9 +11,10 @@ with sqlite3.connect(data/'books.sqlite3') as db:
     assert db.execute('PRAGMA integrity_check').fetchone()[0]=='ok'
     assert db.execute("SELECT count(*) FROM sqlite_master WHERE name='video_review_tasks'").fetchone()[0]==1
 report=json.loads((data/'packaged-smoke.json').read_text(encoding='utf-8'))
-assert report['frozen'] is True
+print('Actual packaged smoke report:',report,flush=True)
+assert report['frozen'] is True,report
 assert report['platform']=='windows',report
 assert report['ocr_12345'] is True,report
-assert Path(report['ocr_executable']).is_relative_to(root)
+assert Path(report['ocr_executable']).resolve().is_relative_to(root), (root,report)
 assert report['python_executable'].lower().endswith('bookworkbench.exe')
 print('Verified packaged Windows UI, SQLite, bundled Tesseract and OCR functional request:',report)
