@@ -106,6 +106,8 @@ class InteractionPolicy(QObject):
         if event.type()==QEvent.Type.Polish:
             if isinstance(obj,QLabel) and obj.pixmap().isNull():
                 obj.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse|Qt.TextInteractionFlag.TextSelectableByKeyboard)
+            if isinstance(obj,(QLineEdit,QTextEdit,QPlainTextEdit)) and not obj.property('smoothContextMenu'):
+                obj.setProperty('smoothContextMenu',True);obj.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu);obj.customContextMenuRequested.connect(lambda point,w=obj:text_context_menu(w,point))
             if isinstance(obj,QAbstractButton):obj.setCursor(Qt.CursorShape.PointingHandCursor)
         return False
 
@@ -207,3 +209,39 @@ class SmoothComboBox(NativeComboBox):
         def finish():
             NativeComboBox.hidePopup(self);popup.setWindowOpacity(1);self._popup_closing=False
         animation.finished.connect(finish);self._popup_animation=animation;animation.start()
+
+from PySide6.QtWidgets import QMenu as NativeMenu
+
+class PopupGhost(QWidget):
+    """A fading, noninteractive snapshot lets native menu actions finish at once."""
+    def __init__(self,pixmap,position):
+        super().__init__(None,Qt.WindowType.ToolTip|Qt.WindowType.FramelessWindowHint|Qt.WindowType.WindowDoesNotAcceptFocus|Qt.WindowType.WindowTransparentForInput)
+        self.image=pixmap;self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground);self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.resize(pixmap.size());self.move(position);app=QApplication.instance()
+        if not hasattr(app,'_popup_ghosts'):app._popup_ghosts=[]
+        app._popup_ghosts.append(self);self.show();self.group=QParallelAnimationGroup(self)
+        for name,start,end in ((b'windowOpacity',1.,0.),(b'pos',position,position+QPoint(0,4))):
+            animation=QPropertyAnimation(self,name,self.group);animation.setDuration(DURATION);animation.setStartValue(start);animation.setEndValue(end);animation.setEasingCurve(QEasingCurve.Type.OutCubic);self.group.addAnimation(animation)
+        def finish():
+            if self in app._popup_ghosts:app._popup_ghosts.remove(self)
+            self.deleteLater()
+        self.group.finished.connect(finish);self.group.start()
+    def paintEvent(self,event):
+        painter=QPainter(self);painter.drawPixmap(0,0,self.image)
+
+class SmoothMenu(NativeMenu):
+    def showEvent(self,event):
+        super().showEvent(event)
+        if reduced_motion():return
+        self._fade=QParallelAnimationGroup(self);position=self.pos()
+        for name,start,end in ((b'windowOpacity',0.,1.),(b'pos',position+QPoint(0,-4),position)):
+            animation=QPropertyAnimation(self,name,self._fade);animation.setDuration(DURATION);animation.setStartValue(start);animation.setEndValue(end);animation.setEasingCurve(QEasingCurve.Type.OutCubic);self._fade.addAnimation(animation)
+        self._fade.start()
+    def hideEvent(self,event):
+        if hasattr(self,'_fade'):self._fade.stop()
+        if not reduced_motion():PopupGhost(self.grab(),self.pos())
+        self.setWindowOpacity(1);super().hideEvent(event)
+
+def text_context_menu(widget,point):
+    native=widget.createStandardContextMenu();menu=SmoothMenu(widget);native.setParent(menu);menu.addActions(native.actions());menu._source=native
+    menu.aboutToHide.connect(lambda:QTimer.singleShot(DURATION,menu.deleteLater));menu.popup(widget.mapToGlobal(point))

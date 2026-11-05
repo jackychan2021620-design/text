@@ -81,3 +81,12 @@ def test_history_pagination_and_state_restore(app,store):
     next(b for b in w.center.findChildren(QPushButton) if b.text()=='下一页').click();assert w.history_table.rowCount()==25
     w.nav.setCurrentRow(1);w.nav.setCurrentRow(7);assert w.history_kind.currentIndex()==2;assert w.history_page_number==1;assert w.history_table.rowCount()==25
     finish(w)
+
+
+def test_context_menu_transition_keeps_native_copy_action_and_does_not_block(app,store):
+    from workbench.experience import SmoothMenu
+    w=MainWindow(store);w.show();QTest.qWait(30)
+    menu=SmoothMenu(w);called=[];action=menu.addAction('复制');action.triggered.connect(lambda:called.append(True));menu.popup(w.mapToGlobal(QPoint(30,30)));QTest.qWait(30)
+    if not reduced_motion():assert menu._fade.duration()==DURATION
+    action.trigger();menu.hide();assert called==[True];assert not menu.isVisible()
+    QTest.qWait(220);assert not getattr(app,'_popup_ghosts',[]);finish(w)

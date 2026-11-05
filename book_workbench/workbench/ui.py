@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap,QDesktopServices,QIcon,QPainter,QColor
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,
  QLineEdit,QTextEdit,QComboBox,QCompleter,QCheckBox,QDialog,QDialogButtonBox,QScrollArea,QTableWidget,QTableWidgetItem,
  QHeaderView,QListWidget,QStackedWidget,QFileDialog,QMessageBox,QInputDialog,QSplitter,QSystemTrayIcon,QMenu,QGraphicsOpacityEffect)
-from .experience import (Dialog as QDialog,FeedbackButton,DataTable,selectable,toast,confirm,install_policy,reduced_motion,readable,DURATION,clean_markdown,SmoothComboBox as QComboBox)
+from .experience import (Dialog as QDialog,FeedbackButton,DataTable,selectable,toast,confirm,install_policy,reduced_motion,readable,DURATION,clean_markdown,SmoothComboBox as QComboBox,SmoothMenu as QMenu)
 from .monitor_ui import MonitorController,MonitorPanel
 from .model import SCHEMA
 from . import APP_VERSION
