@@ -67,7 +67,9 @@ def test_reject_unsafe_api_endpoint(url):
 def test_real_chinese_ocr_and_manual_confirmation(app,store,graph,tmp_path):
     from PySide6.QtGui import QImage,QPainter,QFont,QColor
     from workbench.services import ocr
-    image=QImage(1000,250,QImage.Format.Format_RGB32);image.fill(QColor('white'));p=QPainter(image);p.setPen(QColor('black'));p.setFont(QFont('Microsoft YaHei' if sys.platform=='win32' else 'Noto Sans CJK SC',30));p.drawText(40,90,'总销量 12345');p.drawText(40,180,'带货人数 100');p.end();source=tmp_path/'ocr.png';image.save(str(source))
+    # Fixed, verified raster fixture avoids offscreen font differences across OSes.
+    import shutil
+    source=tmp_path/'ocr.png';shutil.copyfile(Path(__file__).resolve().parents[1]/'resources'/'ocr-check.png',source)
     text=ocr(source);assert '12345' in text and '100' in text
     assert '销量' in text.replace(' ','')
     values={'product_id':graph[1],'screenshot':str(source),'ocr_text':text,'sales':12345,'creators':100}

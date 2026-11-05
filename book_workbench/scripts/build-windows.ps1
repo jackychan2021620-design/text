@@ -11,7 +11,7 @@ if (-not $tesseract) {
 }
 if (-not (Test-Path $tesseract)) { throw 'Tesseract runtime missing; install Tesseract 5 first' }
 $ocrRoot = Split-Path -Parent $tesseract
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name BookWorkbench --collect-submodules keyring.backends --add-data ".ocr/tessdata;.ocr/tessdata" --add-data "$ocrRoot;tesseract" launch.py
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name BookWorkbench --collect-submodules keyring.backends --add-data ".ocr/tessdata;.ocr/tessdata" --add-data "resources;resources" --add-data "$ocrRoot;tesseract" launch.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
 Copy-Item README.md dist\BookWorkbench\README-source.md
 Copy-Item docs\WINDOWS-QUICKSTART.txt dist\BookWorkbench\使用说明.txt
