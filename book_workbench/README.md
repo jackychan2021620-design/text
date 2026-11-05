@@ -2,7 +2,22 @@
 
 独立的 Python / PySide6 / SQLite 桌面应用。与仓库内的造物系统不共享数据库、设置或凭据。本地基础功能离线可用，无演示订单或预填经营数字。
 
-## 安装与启动
+## Windows用户：直接运行
+
+**[下载Windows安装版与便携版](https://github.com/jackychan2021620-design/text/actions/runs/41995501042/artifacts/13400790050)**（外层ZIP约235MB，需要登录GitHub）。
+
+Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
+
+下载解压后有两种选择：
+
+- **安装版**：双击 `BookWorkbench-Setup-1.1.0-Windows-x64.exe`，按提示安装，默认创建桌面快捷方式。
+- **便携版**：完整解压 `BookWorkbench-1.1.0-Windows-x64-portable.zip`，再双击其中的 `BookWorkbench.exe`。不能只复制EXE，也不要在压缩包内直接运行。
+
+发行包内置 Python、Qt、Tesseract 与中文／英文识别模型，**用户不需要安装Python或OCR**。基础功能离线可用，只有AI功能需要自己的DeepSeek Key。
+
+当前为未签名试用包；请核对仓库来源及包内 `SHA256SUMS.txt`。程序数据与安装文件分开保存，升级安装保留经营资料。
+
+## 源码开发：安装与启动
 
 推荐 Windows 10/11 x64、Python 3.12。源码兼容 Python 3.11+；当前验证使用 Python 3.12。
 
@@ -77,4 +92,4 @@ SQLite使用外键、WAL、完整同步及事务。首次启动自动在原子�
 powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
 ```
 
-脚本先设置和测试，再用PyInstaller生成 `dist\BookWorkbench\BookWorkbench.exe`，最后运行打包程序隔离启动检查。需要分发**整个目录**。中文模型包含在产物中，Tesseract引擎仍是独立安装前提。本次没有Windows执行器，因此未实际生成Windows EXE，也未验证Windows托盘、通知、开机启动和真实桌面操作。通过Linux测试不等于Windows成品验收；详见 [验收与测试记录](docs/VALIDATION.md)。
+脚本先设置和测试，再用PyInstaller生成 `dist\BookWorkbench\BookWorkbench.exe`，最后运行打包程序隔离启动检查。需要分发**整个目录**。产物内置Tesseract及中英文模型，用户无需另装运行环境。构建会运行Windows测试、原生窗口启动、内置OCR识别、安装与安装后再次启动检查。自动检查不替代真人的通知、托盘、开机启动及真实DeepSeek联调；结果见 [验收与测试记录](docs/VALIDATION.md)。

@@ -1,6 +1,6 @@
 # 图书带货智能选品工作台
 
-新增独立应用位于 [book_workbench](book_workbench/README.md)，包含图书与商品快照、选品分析、视频投放及双提醒系统。当前为 Linux 已测试源码，Windows 打包与实机验收状态见应用文档。
+新增独立应用位于 [book_workbench](book_workbench/README.md)，包含图书与商品快照、选品分析、视频投放及双提醒系统。已生成内置运行环境的Windows安装版与便携版，通过Windows自动测试、打包及安装后启动检查；下载与人工验收边界见应用文档。
 
 ---
 
