@@ -93,3 +93,27 @@ def test_context_menu_transition_keeps_native_copy_action_and_does_not_block(app
     if not reduced_motion():assert menu._fade.duration()==DURATION
     action.trigger();menu.hide();assert called==[True];assert not menu.isVisible()
     QTest.qWait(220);assert not getattr(app,'_popup_ghosts',[]);finish(w)
+
+
+def test_real_sidebar_clicks_after_page_widgets_are_destroyed(app,store):
+    from PySide6.QtCore import QCoreApplication,QEvent
+    from shiboken6 import isValid
+    w=MainWindow(store);w.show();QTest.qWait(20)
+    timer=w.search_timer
+    for index in [1,9,0,2,8,3,9,7,0,1,9,2,4,6,5,9,0]*2:
+        rect=w.nav.visualItemRect(w.nav.item(index));QTest.mouseClick(w.nav.viewport(),Qt.MouseButton.LeftButton,pos=rect.center())
+        QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete);QTest.qWait(10)
+        assert w.view_key==str(index);assert w.nav.currentRow()==index;assert w.last_error is None
+        assert w.center.updatesEnabled();assert isValid(timer);assert timer is w.search_timer
+    finish(w)
+
+
+def test_leaving_with_pending_search_and_failed_state_capture_is_recoverable(app,store):
+    w=MainWindow(store);w.show();w.nav.setCurrentRow(1);w.search.setText('pending')
+    assert w.search_timer.isActive();w.nav.setCurrentRow(9);assert not w.search_timer.isActive();QTest.qWait(230)
+    with patch.object(w,'remember_view',side_effect=RuntimeError('deleted test widget')):w.nav.setCurrentRow(2)
+    assert w.view_key=='2';assert w.center.updatesEnabled();assert w.last_error is None
+    with patch.object(w,'books',side_effect=ValueError('test page failure')):w.nav.setCurrentRow(1)
+    assert w.center.updatesEnabled();assert w.last_error=='test page failure'
+    w.nav.setCurrentRow(9);QTest.qWait(20);w.nav.setCurrentRow(0)
+    assert w.view_key=='0' and w.last_error is None;assert w.center.updatesEnabled();finish(w)

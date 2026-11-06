@@ -39,7 +39,7 @@ class Dialog(NativeDialog):
         super().__init__(parent);self._closing=False;self._transition=None;self._previous_focus=QApplication.focusWidget()
         self.setWindowModality(Qt.WindowModality.WindowModal if parent else Qt.WindowModality.ApplicationModal)
     def showEvent(self,event):
-        super().showEvent(event)
+        super().showEvent(event);configure_controls(self)
         QTimer.singleShot(0,self._enter)
     def _enter(self):
         if not self.isVisible() or self._closing:return
@@ -103,18 +103,31 @@ class InteractionPolicy(QObject):
     def eventFilter(self,obj,event):
         if event.type()==QEvent.Type.MouseButtonPress and isinstance(obj,QAbstractButton) and obj.isEnabled() and event.button()==Qt.MouseButton.LeftButton:
             obj.setDown(True);obj.repaint()
-        if event.type()==QEvent.Type.Polish:
-            if isinstance(obj,QLabel) and obj.pixmap().isNull():
-                obj.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse|Qt.TextInteractionFlag.TextSelectableByKeyboard);obj.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-            if isinstance(obj,(QLineEdit,QTextEdit,QPlainTextEdit)) and not obj.property('smoothContextMenu'):
-                obj.setProperty('smoothContextMenu',True);obj.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu);obj.customContextMenuRequested.connect(lambda point,w=obj:text_context_menu(w,point))
-            if isinstance(obj,QAbstractButton):obj.setCursor(Qt.CursorShape.PointingHandCursor)
         return False
+
+def configure_controls(root):
+    # Configure only fully constructed application widgets. Mutating native
+    # browser widgets from a global Polish event can crash the Qt renderer.
+    for obj in [root,*root.findChildren(QWidget)]:
+        ancestor=obj;web=False
+        while ancestor is not None:
+            if ancestor.inherits('QWebEngineView'):web=True;break
+            ancestor=ancestor.parentWidget()
+        if web:continue
+        if isinstance(obj,QLabel) and obj.pixmap().isNull():
+            obj.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse|Qt.TextInteractionFlag.TextSelectableByKeyboard);obj.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        if isinstance(obj,(QLineEdit,QTextEdit,QPlainTextEdit)) and not obj.property('smoothContextMenu'):
+            obj.setProperty('smoothContextMenu',True);obj.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu);obj.customContextMenuRequested.connect(lambda point,w=obj:text_context_menu(w,point))
+        if isinstance(obj,QAbstractButton):
+            obj.setCursor(Qt.CursorShape.PointingHandCursor)
+            if not obj.property('instantFeedback'):
+                obj.installEventFilter(install_policy());obj.setProperty('instantFeedback',True)
 
 def install_policy():
     app=QApplication.instance()
     if not hasattr(app,'_interaction_policy'):
-        app._interaction_policy=InteractionPolicy(app);app.installEventFilter(app._interaction_policy)
+        app._interaction_policy=InteractionPolicy(app)
+    return app._interaction_policy
 
 def readable(value,depth=0):
     """Business detail view, without JSON punctuation or model Markdown markers."""

@@ -32,7 +32,7 @@ def test_real_entrypoint_restart_preserves_pending_tasks(tmp_path):
     root=tmp_path/'lifecycle';s=Store(root);b=record(s,'books');p=record(s,'product_links',book_id=b)
     record(s,'data_snapshots',product_id=p);record(s,'video_tests',product_id=p);s.close()
     for _ in range(2):
-        result=subprocess.run([sys.executable,'launch.py','--smoke-test'],cwd=Path(__file__).resolve().parents[1],env=dict(os.environ,QT_QPA_PLATFORM='offscreen',BOOK_WORKBENCH_DATA_DIR=str(root)),capture_output=True,text=True,timeout=20)
+        result=subprocess.run([sys.executable,'launch.py','--smoke-test'],cwd=Path(__file__).resolve().parents[1],env=dict(__import__('test_browser_monitor').browser_test_env(),BOOK_WORKBENCH_DATA_DIR=str(root)),capture_output=True,text=True,timeout=35)
         assert result.returncode==0,result.stderr
     s=Store(root);assert len(s.reminders()['商品15天'])==1;assert len(s.reminders()['视频5天'])==1;s.close()
 

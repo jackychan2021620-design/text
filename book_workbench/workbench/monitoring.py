@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime,timezone
 from html.parser import HTMLParser
-from urllib.parse import urlparse,urljoin,parse_qs,unquote
+from urllib.parse import urlparse,urljoin,parse_qs,unquote,quote
 import requests
 from PySide6.QtCore import QThread,Signal
 
@@ -82,7 +82,10 @@ def product_names(video):
     return names
 
 def parse_page(html,url,expected_owner=''):
-    docs=documents(html);nodes=[node for doc in docs for node in walk(doc)]
+    return parse_documents(documents(html),url,expected_owner)
+
+def parse_documents(docs,url,expected_owner=''):
+    nodes=[node for doc in docs for node in walk(doc)]
     owner=expected_owner or identity(url);nickname=''
     # Profile-specific containers establish identity; unrelated recommendation
     # authors cannot determine which account is being monitored.
@@ -93,13 +96,25 @@ def parse_page(html,url,expected_owner=''):
             ids=owner_ids(profile)
             if ids and (not owner or owner in ids):
                 owner=owner or str(profile.get('secUid') or profile.get('sec_uid') or profile.get('uid'));nickname=profile.get('nickname') or nickname
-    videos={}
+    if not owner:
+        target=re.search(r'/(?:share/)?video/(\d{5,30})',urlparse(url).path)
+        if target:
+            for item in nodes:
+                if str(item.get('aweme_id') or item.get('awemeId') or '')==target[1]:
+                    author=item.get('author') or item.get('authorInfo') or {}
+                    owner=str(author.get('sec_uid') or author.get('secUid') or author.get('uid') or '')
+                    if owner:break
+    videos={};profile_url=''
     for item in nodes:
         video_id=item.get('aweme_id') or item.get('awemeId')
         if not video_id or not re.fullmatch(r'\d{5,30}',str(video_id)):continue
         author=item.get('author') or item.get('authorInfo')
         if not owner or owner not in owner_ids(author):continue
-        stats=item.get('statistics') or {};likes=stats.get('digg_count',stats.get('diggCount'))
+        sec=author.get('sec_uid') or author.get('secUid')
+        if sec:profile_url='https://www.douyin.com/user/'+quote(str(sec),safe='')
+        stats=item.get('statistics') or {}
+        if not isinstance(stats,dict):continue
+        likes=stats.get('digg_count',stats.get('diggCount'))
         # Compact counts (e.g. 1.2万), hidden counts and nulls are not exact counts.
         if isinstance(likes,bool) or not isinstance(likes,int) or likes<0:continue
         timestamp=item.get('create_time',item.get('createTime'));published=''
@@ -117,7 +132,7 @@ def parse_page(html,url,expected_owner=''):
     if not owner:raise ValueError('未读取到账号身份；可能需要登录或页面未提供公开资料')
     if not videos:raise ValueError('未读取到该账号带明确点赞数的作品；可能需要登录、页面动态加载或格式变化。未记为检查成功')
     return {'owner':owner,'nickname':nickname,'url':url,'videos':list(videos.values()),'checked':now(),
-            'coverage':'仅本次公开页面返回的作品，不能代表账号全量作品'}
+            'coverage':'仅本次公开页面返回的作品，不能代表账号全量作品','profile_url':profile_url}
 
 def fetch_page(url,session=None):
     url=public_url(url);deadline=time.monotonic()+25
@@ -169,9 +184,10 @@ class MonitorStore:
         if account is None:return []
         account['last_attempt']=now()
         if result.get('error'):
-            account['error']=result['error'];self.save(value);return []
+            account['error']=result['error'];account['error_code']=result.get('error_code','public_page');self.save(value);return []
         if account['owner'] and account['owner']!=result['owner']:raise ValueError('链接返回的账号与原记录不一致，未覆盖已有数据')
-        account.update(owner=result['owner'],name=result['nickname'] or account['name'],last_success=result['checked'],error='',coverage=result['coverage'])
+        account.update(owner=result['owner'],name=result['nickname'] or account['name'],last_success=result['checked'],error='',error_code='',coverage=result['coverage'])
+        if result.get('profile_url'):account['resolved_url']=public_url(result['profile_url'])
         events=[]
         for video in result['videos']:
             account['videos'][video['id']]=video

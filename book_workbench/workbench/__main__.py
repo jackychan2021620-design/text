@@ -87,21 +87,30 @@ def main():
             if MonitorStore(store).load().get('enabled'):raise ValueError('Fresh diagnostic monitoring should be opt-in')
             window.nav.setCurrentRow(2)
             if window.last_error or window.search_timer.interval()!=200 or window.table.frozen is None:raise ValueError('Debounced collection table failed')
-            report={'single_book':True,'monitoring_local':True,'feedback_ms':feedback_ms,'debounce_ms':200,'transition_ms':DURATION,'trash_recovery':True,'three_tiers':True,'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+            from PySide6.QtCore import QCoreApplication,QEvent
+            for index in (9,0,1,9,2,8,3,7,0):
+                window.nav.setCurrentRow(index);QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete);app.processEvents()
+                if window.view_key!=str(index) or window.last_error or not window.center.updatesEnabled():raise ValueError('Cross-page navigation failed')
+            from .browser_checks import browser_smoke
+            browser_result=browser_smoke(root,window)
+            report={'navigation_recovery':True,'browser':browser_result,'single_book':True,'monitoring_local':True,'feedback_ms':feedback_ms,'debounce_ms':200,'transition_ms':DURATION,'trash_recovery':True,'three_tiers':True,'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
                     'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
             (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
             QTimer.singleShot(500,app.quit)
         return app.exec()
     except Exception:
-        import traceback;traceback.print_exc();return 1
+        import traceback
+        (root/'startup-error.log').write_text(traceback.format_exc(),encoding='utf-8');traceback.print_exc();return 1
     finally:
         if window:
-            window.timer.stop();window.monitor.timer.stop()
+            window.timer.stop();window.monitor.shutdown()
             for worker in (window.worker,window.backup_worker,window.monitor.worker):
                 if worker and worker.isRunning():
                     worker.requestInterruption()
                     while not worker.wait(100):app.processEvents()
             app.processEvents()
+            from PySide6.QtCore import QCoreApplication,QEvent
+            QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
         if store:store.close()
         lock.unlock()
 if __name__=='__main__':raise SystemExit(main())

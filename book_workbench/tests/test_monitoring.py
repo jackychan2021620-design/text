@@ -65,3 +65,12 @@ def test_monitoring_opt_in_and_existing_data_visible(app,store):
     assert panel.works.rowCount()==1;assert panel.works.item(0,2).text()=='100'
     controller.receive(id,{'error':'测试网络失败'});assert panel.works.rowCount()==1;assert panel.accounts.item(0,3).text()=='测试网络失败'
     panel.close()
+
+
+def test_video_share_resolves_only_its_author_not_recommended_account():
+    from workbench.monitoring import parse_documents
+    target={'aweme_id':'1234567890123456','author':{'sec_uid':OWNER,'nickname':'目标账号'},'statistics':{'digg_count':123},'desc':'目标作品'}
+    other=target|{'aweme_id':'1234567890123457','author':{'sec_uid':'OTHER','nickname':'推荐账号'}}
+    r=parse_documents([{'aweme_list':[target,other]}],'https://www.douyin.com/video/1234567890123456')
+    assert r['owner']==OWNER;assert r['profile_url']==URL;assert len(r['videos'])==1
+    with pytest.raises(ValueError):parse_documents([{'aweme_list':[other]}],'https://www.douyin.com/video/1234567890123456')

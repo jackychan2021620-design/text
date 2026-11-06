@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap,QDesktopServices,QIcon,QPainter,QColor
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,QPushButton,
  QLineEdit,QTextEdit,QComboBox,QCompleter,QCheckBox,QDialog,QDialogButtonBox,QScrollArea,QTableWidget,QTableWidgetItem,
  QHeaderView,QListWidget,QStackedWidget,QFileDialog,QMessageBox,QInputDialog,QSplitter,QSystemTrayIcon,QMenu,QGraphicsOpacityEffect)
-from .experience import (Dialog as QDialog,FeedbackButton,DataTable,selectable,toast,confirm,install_policy,reduced_motion,readable,DURATION,clean_markdown,SmoothComboBox as QComboBox,SmoothMenu as QMenu)
+from .experience import (Dialog as QDialog,FeedbackButton,DataTable,selectable,toast,confirm,install_policy,reduced_motion,readable,DURATION,clean_markdown,SmoothComboBox as QComboBox,SmoothMenu as QMenu,configure_controls)
 from .monitor_ui import MonitorController,MonitorPanel
 from .model import SCHEMA
 from . import APP_VERSION
@@ -399,7 +399,8 @@ class Editor(QDialog):
 
 class MainWindow(QMainWindow):
     def __init__(self,store):
-        super().__init__();install_policy();self.store=store;self.runtime_key='';self.worker=None;self.ai_id=None;self.quitting=False;self.view_states={};self.view_key=None;self._crud_update=None;self.backup_worker=None;self.pending_quit=False
+        super().__init__();install_policy();self.store=store;self.runtime_key='';self.worker=None;self.ai_id=None;self.quitting=False;self.view_states={};self.view_key=None;self._crud_update=None;self.backup_worker=None;self.pending_quit=False;self._changing_page=False
+        self.search_timer=QTimer(self);self.search_timer.setSingleShot(True);self.search_timer.setInterval(200);self.search_timer.timeout.connect(self.flush_search)
         QApplication.instance().setProperty('reducedMotion',store.setting('reduced_motion','0')=='1');self.monitor=MonitorController(store,self);self.monitor.updated.connect(self.finish_pending_close)
         self.setWindowTitle('图书带货智能选品工作台 · V'+APP_VERSION);self.resize(1550,950);self.setMinimumSize(1100,700)
         self.setStyleSheet(STYLE);root=QSplitter();self.setCentralWidget(root)
@@ -417,6 +418,7 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self.refresh);self.nav.setCurrentRow(0)
         pix=QPixmap(64,64);pix.fill(QColor('#567e6a'));p=QPainter(pix);p.setPen(QColor('white'));p.drawText(pix.rect(),Qt.AlignmentFlag.AlignCenter,'书');p.end();self.setWindowIcon(QIcon(pix))
         self.tray=QSystemTrayIcon(self.windowIcon(),self);menu=QMenu();menu.addAction('打开工作台',self.showNormal);menu.addAction('退出',self.quit_app);self.tray.setContextMenu(menu)
+        configure_controls(self)
         self.tray.activated.connect(lambda _:self.showNormal())
         if QSystemTrayIcon.isSystemTrayAvailable():self.tray.show()
         self.timer=QTimer(self);self.timer.timeout.connect(self.maintain);self.timer.start(60000);QTimer.singleShot(100,self.maintain)
@@ -466,9 +468,13 @@ class MainWindow(QMainWindow):
                     if r['id']==saved.get('selected'):table.selectRow(i);break
                 table.verticalScrollBar().setValue(saved.get('vertical',0));table.horizontalScrollBar().setValue(saved.get('horizontal',0))
         QTimer.singleShot(0,restore_scroll)
+    def flush_search(self):
+        if self._crud_update and not self._changing_page:self._crud_update()
     def clear(self,view_key=None):
-        self.remember_view();self._crud_update=None
-        if hasattr(self,'search_timer'):self.search_timer.stop()
+        self.search_timer.stop()
+        try:self.remember_view()
+        except (RuntimeError,ValueError,KeyError,IndexError) as exc:self.statusBar().showMessage('部分页面状态未保留：'+str(exc))
+        self._crud_update=None
         while self.layout.count():
             item=self.layout.takeAt(0)
             widget=item.widget()
@@ -476,19 +482,25 @@ class MainWindow(QMainWindow):
         self.table=None;self.visible=[]
         if view_key is not None:self.view_key=view_key
     def refresh(self,*args):
-        scope=self.ai_scope.currentData();self.ai_scope.clear();self.ai_scope.addItem('全部图书历史',None)
-        for b in self.store.rows('books'):self.ai_scope.addItem(f'仅图书#{b["id"]} '+b['name'],b['id'])
-        self.ai_scope.setCurrentIndex(max(0,self.ai_scope.findData(scope)))
-        self.center.setUpdatesEnabled(False);index=self.nav.currentRow();self.clear(str(index));self.layout.addWidget(label(self.nav.currentItem().text() if self.nav.currentItem() else '工作台',True))
-        self.last_error=None
+        if self._changing_page:return
+        self._changing_page=True;self.last_error=None
         try:
+            self.center.setUpdatesEnabled(False)
+            scope=self.ai_scope.currentData()
+            with QSignalBlocker(self.ai_scope):
+                self.ai_scope.clear();self.ai_scope.addItem('全部图书历史',None)
+                for book in self.store.rows('books'):self.ai_scope.addItem(f'仅图书#{book["id"]} '+book['name'],book['id'])
+                self.ai_scope.setCurrentIndex(max(0,self.ai_scope.findData(scope)))
+            index=self.nav.currentRow();self.clear(str(index));self.layout.addWidget(label(self.nav.currentItem().text() if self.nav.currentItem() else '工作台',True))
             [self.home,self.books,self.collection,self.products,self.comparison,self.ai_page,self.videos,self.history,self.settings_page,self.monitor_page][max(0,index)]()
-            self.restore_view()
-        except Exception as exc:self.last_error=str(exc);self.layout.addWidget(label(str(exc)));self.toolbar([('重试',self.refresh)])
+            self.restore_view();configure_controls(self.center)
+        except Exception as exc:
+            self.last_error=str(exc);self.layout.addWidget(label('此页暂时无法显示，可切换其他栏目或重试。'));self.toolbar([('重试',self.refresh)]);self.statusBar().showMessage(str(exc))
         finally:
-            self.center.setUpdatesEnabled(True)
+            self.center.setUpdatesEnabled(True);self._changing_page=False
             self.page_fade.stop();self.content_effect.setOpacity(1)
             if not reduced_motion():self.page_fade.setStartValue(.92);self.page_fade.setEndValue(1);self.page_fade.start()
+        if self.view_key!=str(self.nav.currentRow()) and not self.last_error:QTimer.singleShot(0,self.refresh)
     def toolbar(self,actions):
         w=QWidget();row=QHBoxLayout(w);row.setContentsMargins(0,0,0,0)
         for title,fn in actions:row.addWidget(button(title,lambda checked=False,f=fn:self.guarded(f)))
@@ -537,7 +549,7 @@ class MainWindow(QMainWindow):
             empty.setText('没有符合条件的记录，可调整搜索或筛选。' if not rows and (search.text() or category.currentIndex()) else '暂无记录，点击“新增”开始。' if not rows else '')
             empty.setVisible(not rows)
         def change_page(delta):self.page_number+=delta;update(reset=False);view.verticalScrollBar().setValue(0)
-        timer=QTimer(view);timer.setSingleShot(True);timer.setInterval(200);timer.timeout.connect(update);self.search_timer=timer
+        timer=self.search_timer
         search.textChanged.connect(lambda _:(timer.start(),self.statusBar().showMessage('正在筛选，已有数据保留显示')));category.currentIndexChanged.connect(lambda _:(timer.start(),self.statusBar().showMessage('正在筛选，已有数据保留显示')))
         self._crud_update=update;update(reset=False);view.pin_actions(len(cols));view.editRequested.connect(lambda i:(view.selectRow(i),self.guarded(lambda:self.editor(table,self.selected()))))
         view.cellDoubleClicked.connect(lambda *_:self.guarded(lambda:self.editor(table,self.selected())))
@@ -784,6 +796,6 @@ class MainWindow(QMainWindow):
         if not self.quitting and self.store.setting('background','0')=='1' and self.tray.isVisible():self.hide();event.ignore();return
         if self.workers_busy():
             self.pending_quit=True;self.quitting=True
-            if self.monitor.busy():self.monitor.worker.requestInterruption()
+            if self.monitor.busy():self.monitor.stop()
             event.ignore();toast(self,'正在结束后台任务，完成后会自动退出。');return
-        self.timer.stop();self.monitor.timer.stop();self.tray.hide();event.accept()
+        self.timer.stop();self.monitor.shutdown();self.tray.hide();event.accept()
