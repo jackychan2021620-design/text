@@ -12,11 +12,11 @@ with sqlite3.connect(data/'books.sqlite3') as db:
     assert db.execute("SELECT count(*) FROM sqlite_master WHERE name='video_review_tasks'").fetchone()[0]==1
 report=json.loads((data/'packaged-smoke.json').read_text(encoding='utf-8'))
 print('Actual packaged smoke report:',report,flush=True)
-assert report['version']=='1.1.6' and report['curve_dialog'] is True,report
+assert report['version']=='1.1.7' and report['curve_dialog'] is True,report
 assert report['collection_recovery'] is True,report
 assert report['revision_save'] and report['curve_chart'] and report['raw_ocr_hidden'],report
 assert report['navigation_recovery'] and report['browser']['renderer'] and report['browser']['public_response'] and report['browser']['login_pause'],report
-assert list(root.rglob('QtWebEngineProcess.exe')),root
+assert report['browser']['pixels'] and report['browser']['click'] and report['browser']['system_browser'] and report['browser']['recent_posts'] and report['curve_extraction'],report
 assert report['single_book'] and report['monitoring_local'] and report['feedback_ms']<100 and report['debounce_ms']==200 and report['transition_ms']==180,report
 assert report['trash_recovery'] and report['three_tiers'],report
 assert report['ocr_fields']['creators']==100 and report['ocr_fields']['sales']==12345,report

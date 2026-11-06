@@ -1,4 +1,4 @@
-#define AppVersion "1.1.6"
+#define AppVersion "1.1.7"
 [Setup]
 AppId={{472FEBC8-D684-44FA-A3B1-D79C35495111}
 AppName=图书带货智能选品工作台
@@ -9,7 +9,7 @@ DefaultGroupName=图书带货智能选品工作台
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\dist\installer
-OutputBaseFilename=BookWorkbench-Setup-1.1.6-Windows-x64
+OutputBaseFilename=BookWorkbench-Setup-1.1.7-Windows-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

@@ -11,7 +11,7 @@ if (-not $tesseract) {
 }
 if (-not (Test-Path $tesseract)) { throw 'Tesseract runtime missing; install Tesseract 5 first' }
 $ocrRoot = Split-Path -Parent $tesseract
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name BookWorkbench --collect-submodules keyring.backends --add-data ".ocr/tessdata;.ocr/tessdata" --add-data "resources;resources" --add-data "$ocrRoot;tesseract" launch.py
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name BookWorkbench --collect-submodules keyring.backends --exclude-module PySide6.QtWebEngineWidgets --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineQuick --add-data ".ocr/tessdata;.ocr/tessdata" --add-data "resources;resources" --add-data "$ocrRoot;tesseract" launch.py
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
 Copy-Item README.md dist\BookWorkbench\README-source.md
 Copy-Item docs\WINDOWS-QUICKSTART.txt dist\BookWorkbench\使用说明.txt
@@ -30,13 +30,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw ('Packaged validation failed: ' + ($packageCheck -join "`n")) }
 } finally { Remove-Item Env:BOOK_WORKBENCH_DATA_DIR -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force dist\downloads | Out-Null
-Compress-Archive -Path dist\BookWorkbench -DestinationPath dist\downloads\BookWorkbench-1.1.6-Windows-x64-portable.zip -Force
+Compress-Archive -Path dist\BookWorkbench -DestinationPath dist\downloads\BookWorkbench-1.1.7-Windows-x64-portable.zip -Force
 $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
 if (-not (Test-Path $iscc)) { throw 'Inno Setup 6 required' }
 & $iscc scripts\installer.iss
 if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
 # Validate silent install into a temporary directory and run the installed app.
-$installer = (Resolve-Path dist\installer\BookWorkbench-Setup-1.1.6-Windows-x64.exe).Path
+$installer = (Resolve-Path dist\installer\BookWorkbench-Setup-1.1.7-Windows-x64.exe).Path
 $installRoot = Join-Path $env:TEMP ('中文安装路径-图书工作台-' + [guid]::NewGuid())
 $process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$installRoot`"",'/TASKS=' -PassThru -Wait
 if ($process.ExitCode -ne 0) { throw 'Installer execution failed' }

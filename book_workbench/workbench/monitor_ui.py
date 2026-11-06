@@ -3,9 +3,9 @@ from PySide6.QtCore import QObject,Signal,QTimer,Qt,QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLineEdit,QCheckBox,QComboBox,QTableWidgetItem,QLabel,QSystemTrayIcon
 from .experience import FeedbackButton,DataTable,selectable,toast,confirm
-from .monitoring import MonitorStore,MonitorWorker,THRESHOLD
-from .browser_monitor import BrowserMonitor
-from datetime import datetime
+from .monitoring import MonitorStore,MonitorWorker,THRESHOLD,is_hot
+import sys
+from datetime import datetime,timezone,timedelta
 
 def display_time(value):
     if not value:return '尚无记录'
@@ -21,13 +21,21 @@ class MonitorController(QObject):
     def busy(self):return bool((self.browser and self.browser.busy) or (self.worker and self.worker.isRunning()))
     def ensure_browser(self):
         if not self.browser:
-            self.browser=BrowserMonitor(self.storage.store.root,self.parent());self.browser.result.connect(self.receive);self.browser.changed.connect(self.updated)
+            from .system_browser import SystemBrowserMonitor
+            if sys.platform=='win32':self.browser=SystemBrowserMonitor(self.storage.store.root,self.parent())
+            else:
+                from .browser_monitor import BrowserMonitor
+                self.browser=BrowserMonitor(self.storage.store.root,self.parent())
+            self.browser.result.connect(self.receive);self.browser.changed.connect(self.updated)
         return self.browser
     def open_account(self,account):self.ensure_browser().open_account(account)
-    def open_video(self,account,video):self.ensure_browser().open_account(account,url=video['url'])
+    def open_video(self,account,video):self.ensure_browser().inspect_video(account,video)
     def read_current(self):
         if self.browser:self.browser.read_current()
         elif self.parent():toast(self.parent(),'请先选中账号，点击“打开抖音并登录”。')
+    def load_recent(self,account):
+        b=self.ensure_browser()
+        b.start([account],interactive=True);b.show()
     def stop(self):
         if self.browser:self.browser.cancel()
         if self.worker and self.worker.isRunning():self.worker.requestInterruption()
@@ -63,7 +71,7 @@ class MonitorController(QObject):
 class MonitorPanel(QWidget):
     def __init__(self,controller,parent=None):
         super().__init__(parent);self.controller=controller;self.page=0;layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(12)
-        layout.addWidget(selectable('使用内置浏览器加载抖音。首次请打开账号并正常登录，再读取公开作品和赞数；不读取成交、广告消耗或ROI。'))
+        layout.addWidget(selectable('使用系统 Edge／Chrome 的监测专用窗口。正常登录后读取公开作品；“加载近期作品”会继续加载后续批次。'))
         line=QHBoxLayout();self.link=QLineEdit();self.link.setPlaceholderText('粘贴抖音账号分享链接，可包含分享口令');line.addWidget(self.link,1)
         add=FeedbackButton('添加账号');add.clicked.connect(self.add);line.addWidget(add)
         self.check=FeedbackButton('立即检查');self.check.setProperty('role','primary');self.check.clicked.connect(controller.start);line.addWidget(self.check);layout.addLayout(line)
@@ -71,9 +79,10 @@ class MonitorPanel(QWidget):
         self.status=selectable('');layout.addWidget(self.status)
         self.accounts=DataTable(0,5);self.accounts.setHorizontalHeaderLabels(['账号','最近尝试','最近成功','读取状态','100赞未读提醒']);self.accounts.setMaximumHeight(200);self.accounts.itemSelectionChanged.connect(self.choose);layout.addWidget(self.accounts)
         commands=QHBoxLayout()
-        for title,fn in [('打开抖音并登录',self.open_account),('读取当前页面',controller.read_current),('标为已读',self.mark_read),('移除监测',self.remove)]:
+        for title,fn in [('打开抖音并登录',self.open_account),('读取当前页面',controller.read_current),('加载近期作品',self.load_recent),('标为已读',self.mark_read),('补查书名',self.inspect_selected),('移除监测',self.remove)]:
             button=FeedbackButton(title);button.clicked.connect(fn);commands.addWidget(button)
         commands.addStretch();self.hot=QCheckBox('只看100赞及以上');self.hot.toggled.connect(self.reset_page);commands.addWidget(self.hot);layout.addLayout(commands)
+        self.period=QComboBox();self.period.setObjectName('monitorPeriod');self.period.addItems(['全部已发现作品','最近30天','最近7天','日期未显示']);self.period.currentIndexChanged.connect(self.reset_page);layout.addWidget(self.period)
         self.works=DataTable(0,6);self.works.setHorizontalHeaderLabels(['挂车商品／书名','视频文案','点赞数','发布时间','书名依据','最近读取']);self.works.cellDoubleClicked.connect(self.open_video);layout.addWidget(self.works,1)
         pagination=QHBoxLayout();self.count=selectable('');pagination.addWidget(self.count);pagination.addStretch()
         self.previous=FeedbackButton('上一页');self.previous.clicked.connect(lambda:self.move_page(-1));pagination.addWidget(self.previous)
@@ -99,13 +108,22 @@ class MonitorPanel(QWidget):
     def choose(self):
         try:a=self.selected()
         except ValueError:a={'videos':{}}
-        self.videos=sorted((v for v in a['videos'].values() if not self.hot.isChecked() or v['likes']>=THRESHOLD),key=lambda v:(v.get('published',''),v['id']),reverse=True)
+        self.videos=sorted((v for v in a['videos'].values() if (not self.hot.isChecked() or is_hot(v)) and self.in_period(v)),key=lambda v:(v.get('published',''),v['id']),reverse=True)
         self.page=min(self.page,max(0,(len(self.videos)-1)//50));self.visible=self.videos[self.page*50:(self.page+1)*50];self.works.setRowCount(len(self.visible))
         for i,v in enumerate(self.visible):
             book='、'.join(v['products']) or ('文案提及：'+'、'.join(v['book_hints']) if v['book_hints'] else '待确认')
-            for j,value in enumerate((book,v['title'],v['likes'],display_time(v['published']) if v['published'] else '未知',v['book_status'],display_time(v['checked']))):self.works.setItem(i,j,QTableWidgetItem(str(value)))
+            for j,value in enumerate((book,v['title'],(v.get('likes_display') or ('未显示' if v.get('likes') is None else str(v['likes'])))+('（上次）' if v.get('likes_checked') and v['likes_checked']!=v['checked'] else ''),display_time(v['published']) if v['published'] else '未知',v['book_status'],display_time(v['checked']))):self.works.setItem(i,j,QTableWidgetItem(str(value)))
         self.count.setText(f'已发现 {len(self.videos)} 条作品 · 第 {self.page+1} 页'+(' · 暂无可显示作品' if not self.videos else ''))
         self.previous.setEnabled(self.page>0);self.following.setEnabled((self.page+1)*50<len(self.videos))
+    def in_period(self,video):
+        if self.period.currentIndex()==3:return not video.get('published')
+        days={1:30,2:7}.get(self.period.currentIndex())
+        if days is None:return True
+        try:return datetime.now(timezone.utc)-datetime.fromisoformat(video.get('published',''))<=timedelta(days=days)
+        except (ValueError,TypeError):return False
+    def load_recent(self):
+        try:self.controller.load_recent(self.selected())
+        except (ValueError,RuntimeError,OSError) as exc:toast(self,str(exc),True)
     def reset_page(self):self.page=0;self.choose()
     def move_page(self,n):self.page+=n;self.choose()
     def open_account(self):
@@ -113,6 +131,10 @@ class MonitorPanel(QWidget):
         except ValueError as exc:toast(self,str(exc))
     def open_video(self,row,column):
         if 0<=row<len(self.visible):self.controller.open_video(self.selected(),self.visible[row])
+    def inspect_selected(self):
+        i=self.works.currentRow()
+        if i<0:toast(self,'请先选择下方的一条作品');return
+        self.open_video(i,0)
     def mark_read(self):
         try:self.controller.storage.mark_read(self.selected()['id']);self.reload();toast(self,'已标为已读，同一视频不再重复提醒')
         except ValueError as exc:toast(self,str(exc))

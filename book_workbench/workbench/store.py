@@ -147,6 +147,15 @@ COMMIT;
     def settings(self,values):
         with self.db:
             self.db.executemany('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',[(k,str(v)) for k,v in values.items()])
+    def ocr_layout(self,asset):
+        try:
+            value=json.loads(self.setting('ocr-layout:'+asset,'[]'))
+            return value if isinstance(value,list) else []
+        except (TypeError,ValueError):return []
+    def save_ocr_layout(self,asset,words):
+        if not asset or not words:return
+        simple=[{k:w[k] for k in ('text','left','top','width','height') if k in w} for w in words[:10000]]
+        self.settings({'ocr-layout:'+asset:encode(simple)})
     def attach(self,path):
         source=Path(path)
         if not source.is_file() or source.stat().st_size>200*1024**2:raise ValueError('附件不存在或超过200MB')

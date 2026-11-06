@@ -1,5 +1,6 @@
 import sys
-from PySide6.QtCore import QLockFile,QTimer
+from PySide6.QtCore import QLockFile,QTimer,QCoreApplication,Qt
+QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 from PySide6.QtWidgets import QApplication,QMessageBox,QDialogButtonBox
 from .store import Store,data_dir
 from .ui import MainWindow,Editor,OCRReviewDialog
@@ -93,7 +94,11 @@ def main():
                 if window.view_key!=str(index) or window.last_error or not window.center.updatesEnabled():raise ValueError('Cross-page navigation failed')
             from .browser_checks import browser_smoke
             browser_result=browser_smoke(root,window)
-            report={'navigation_recovery':True,'browser':browser_result,'single_book':True,'monitoring_local':True,'feedback_ms':feedback_ms,'debounce_ms':200,'transition_ms':DURATION,'trash_recovery':True,'three_tiers':True,'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
+            from .image_io import read_image
+            from .curve import locate_curve,trace_curve
+            mobile=read_image(resources/'mobile-layout-test.png');hint=locate_curve(mobile)
+            if not hint or len(trace_curve(mobile,hint['rect'],100,0,90)['values'])!=90:raise ValueError('Relative screenshot curve extraction failed')
+            report={'curve_extraction':True,'navigation_recovery':True,'browser':browser_result,'single_book':True,'monitoring_local':True,'feedback_ms':feedback_ms,'debounce_ms':200,'transition_ms':DURATION,'trash_recovery':True,'three_tiers':True,'revision_save':True,'curve_chart':True,'raw_ocr_hidden':True,'curve_dialog':True,'version':APP_VERSION,'collection_recovery':True,'ocr_fields':{k:v['value'] for k,v in proposals.items()},'frozen':bool(getattr(sys,'frozen',False)),'platform':app.platformName(),
                     'ocr_12345':True,'ocr_executable':ocr_executable(),'python_executable':sys.executable}
             (root/'packaged-smoke.json').write_text(json.dumps(report),encoding='utf-8')
             QTimer.singleShot(500,app.quit)
@@ -104,7 +109,7 @@ def main():
     finally:
         if window:
             window.timer.stop();window.monitor.shutdown()
-            for worker in (window.worker,window.backup_worker,window.monitor.worker):
+            for worker in (window.worker,window.backup_worker,window.monitor.worker,*list(getattr(app,'_curve_workers',set()))):
                 if worker and worker.isRunning():
                     worker.requestInterruption()
                     while not worker.wait(100):app.processEvents()

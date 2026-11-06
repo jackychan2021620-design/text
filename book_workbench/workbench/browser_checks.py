@@ -1,16 +1,22 @@
 """Offline Chromium check used by source tests and the packaged diagnostics."""
 import json
+import sys
 import time
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QCoreApplication,QEvent,QEventLoop,QTimer,QUrl,Qt
-from PySide6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
-from .browser_monitor import BrowserMonitor,capture_script
-
-class OfflineOnly(QWebEngineUrlRequestInterceptor):
-    def interceptRequest(self,info):
-        if info.requestUrl().scheme() not in ('data','about','blob'):info.block(True)
 
 def browser_smoke(root,parent=None):
+    if sys.platform=='win32':
+        from .system_browser_checks import system_browser_smoke
+        return system_browser_smoke(root,parent)
+    return qt_browser_smoke(root,parent)
+
+def qt_browser_smoke(root,parent=None):
+    from PySide6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
+    from .browser_monitor import BrowserMonitor,capture_script
+    class OfflineOnly(QWebEngineUrlRequestInterceptor):
+        def interceptRequest(self,info):
+            if info.requestUrl().scheme() not in ('data','about','blob'):info.block(True)
     browser=BrowserMonitor(root,parent);blocker=OfflineOnly(browser.profile);browser.profile.setUrlRequestInterceptor(blocker)
     browser.manual_account={'id':'offline-check','url':'https://www.douyin.com/user/OFFLINE-OWNER','owner':'OFFLINE-OWNER','name':'offline check','videos':{}}
     browser.page.allow_inline=True;loop=QEventLoop();results=[]

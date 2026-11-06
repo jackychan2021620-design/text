@@ -26,7 +26,7 @@ def test_only_official_public_urls(url):
 def test_share_noise_and_cart_evidence_are_separate():
     assert public_url('分享 https://v.douyin.com/zZoup5HEVkM/ 1@7.com :0pm')=='https://v.douyin.com/zZoup5HEVkM/'
     v=parse_page(html(),URL)['videos'][0];assert v['products']==['测试书·第2版'];assert v['likes']==99
-    v=parse_page(html(products=False),URL)['videos'][0];assert v['products']==[];assert v['book_hints']==['测试书'];assert v['book_status']=='挂车书名待确认'
+    v=parse_page(html(products=False),URL)['videos'][0];assert v['products']==[];assert v['book_hints']==['测试书'];assert v['book_status']=='文案书名，挂车未确认'
 
 @pytest.mark.parametrize('value',[None,'1.2万',True,-1])
 def test_hidden_or_rounded_likes_not_treated_as_exact(value):
@@ -74,3 +74,51 @@ def test_video_share_resolves_only_its_author_not_recommended_account():
     r=parse_documents([{'aweme_list':[target,other]}],'https://www.douyin.com/video/1234567890123456')
     assert r['owner']==OWNER;assert r['profile_url']==URL;assert len(r['videos'])==1
     with pytest.raises(ValueError):parse_documents([{'aweme_list':[other]}],'https://www.douyin.com/video/1234567890123456')
+
+
+def test_new_november_posts_keep_string_millisecond_dates_and_missing_counts():
+    from datetime import datetime,timezone
+    from workbench.monitoring import parse_documents
+    def v(id,stamp,likes):return {'aweme_id':str(id),'author':{'sec_uid':OWNER},'desc':'《新书》','create_time':stamp,'statistics':{'digg_count':likes}}
+    october=datetime(2026,10,30,tzinfo=timezone.utc).timestamp();november=datetime(2026,11,4,tzinfo=timezone.utc).timestamp()
+    docs=[{'aweme_list':[v(1234567890123456,october,100),v(1234567890123457,str(int(november*1000)),None),v(1234567890123458,'2026-11-05T08:00:00+08:00','123')]}]
+    rows=parse_documents(docs,URL,partial=True)['videos'];by_id={r['id']:r for r in rows}
+    assert len(rows)==3;assert by_id['1234567890123457']['published'].startswith('2026-11-04');assert by_id['1234567890123457']['likes'] is None
+    assert by_id['1234567890123458']['published'].startswith('2026-11-05');assert by_id['1234567890123458']['likes']==123
+
+
+def test_rounded_counts_use_conservative_threshold_and_do_not_invent_exact_likes():
+    from workbench.monitoring import visible_likes,is_hot
+    assert visible_likes('点赞100')['likes_exact'];assert is_hot(visible_likes('1.2万'))
+    assert not visible_likes('1.2万')['likes_exact'];assert not is_hot(visible_likes('0.01万'));assert visible_likes('未知') is None
+
+
+def test_nested_cart_names_and_unrelated_anchors():
+    from workbench.monitoring import product_names
+    assert product_names({'anchor_info':{'title':'购物','extra':json.dumps({'product_id':'p','product_title':'图解机器学习 第2版'})}})==['图解机器学习 第2版']
+    assert product_names({'anchors':[{'title':'背景音乐','extra':{'music_id':'m'}}]})==[]
+
+
+def test_partial_refresh_preserves_book_and_date_and_does_not_notify_stale_counts(store):
+    from workbench.monitoring import MonitorStore,parse_documents
+    m=MonitorStore(store);m.add(URL);id=m.load()['accounts'][0]['id'];m.apply(id,result(99))
+    old=m.load()['accounts'][0]['videos']['1234567890123456'];fresh=old|{'likes':None,'likes_lower_bound':None,'products':[],'published':'','book_hints':[]}
+    m.apply(id,result(99)|{'videos':[fresh]});v=m.load()['accounts'][0]['videos'][old['id']]
+    assert v['likes']==99;assert v['products']==old['products'];assert v['published']==old['published'];assert not m.load()['accounts'][0]['unread']
+
+
+def test_shared_video_does_not_bind_the_logged_in_viewer():
+    from workbench.monitoring import parse_documents
+    doc={'userInfo':{'user':{'sec_uid':'VIEWER'}},'aweme_detail':{'aweme_id':'1234567890123456','author':{'sec_uid':OWNER},'statistics':{'digg_count':100}}}
+    assert parse_documents([doc],'https://www.douyin.com/video/1234567890123456')['owner']==OWNER
+    with pytest.raises(ValueError):parse_documents([doc],'https://www.douyin.com/recommend')
+
+
+def test_old_unverified_binding_is_archived_only_after_original_link_verification(store):
+    from workbench.monitoring import MonitorStore
+    m=MonitorStore(store);m.add(URL);id=m.load()['accounts'][0]['id']
+    wrong=result(99)|{'owner':'WRONG','owner_aliases':['WRONG']};m.apply(id,wrong)
+    assert m.load()['accounts'][0]['owner']=='WRONG'
+    m.apply(id,result(100)|{'identity_verified':True});a=m.load()['accounts'][0]
+    assert a['owner']==OWNER and a['identity_version']=='target-v2';assert a['archived_unverified'][0]['owner']=='WRONG';assert a['archived_unverified'][0]['videos']
+    with pytest.raises(ValueError):m.apply(id,wrong|{'identity_verified':True})

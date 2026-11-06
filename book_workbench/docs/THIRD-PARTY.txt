@@ -11,4 +11,4 @@ The desktop application invokes Tesseract as a separate local process. It does n
 
 Qt WebEngine / Chromium: https://doc.qt.io/qt-6/qtwebengine-licensing.html
 Chromium and its third-party components: https://www.chromium.org/chromium-projects/ and https://chromium.googlesource.com/chromium/src/+/main/LICENSE
-Qt WebEngine is dynamically linked from the pinned PySide6 distribution. Its renderer executable and resource files are included in the Windows package. Browser session files remain local and are excluded from database/attachment ZIP backups.
+Qt WebEngine is dynamically linked from the pinned PySide6 distribution. The Windows 1.1.7 package uses an installed Edge/Chrome browser and excludes Qt WebEngine binaries; Qt WebEngine remains an optional non-Windows source backend. Browser session files remain local and are excluded from database/attachment ZIP backups.

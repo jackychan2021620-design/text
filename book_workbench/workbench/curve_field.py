@@ -22,7 +22,8 @@ class CurvePlot(QWidget):
         self.series.replace([QPointF(i+1,v) for i,v in enumerate(values)])
         self.x_axis.setRange(1,max(2,len(values)));self.x_axis.setTickCount(min(6,max(2,len(values))))
         self.y_axis.setRange(0,max(1,max(values,default=0)*1.1));self.y_axis.setLabelFormat('%.1f' if max(values,default=0)<5 else '%.0f')
-        self.x_axis.setTitleText('等距趋势采样点' if source=='读图估算' else '录入顺序')
+        self.x_axis.setTitleText('等距趋势采样点' if source in ('读图估算','相对走势') else '录入顺序')
+        self.y_axis.setTitleText('走势强弱（无销量单位）' if '相对走势' in source else '销量')
         self.status.setText(f'{source} · {len(values)}个曲线点'+(' · 仅供趋势参考，不是精确日销量' if source=='读图估算' else '') if values else '暂无曲线：选择截图后点击“从截图提取曲线”，或手动录入。')
 
 class CurveField(QWidget):

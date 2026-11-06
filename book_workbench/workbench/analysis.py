@@ -6,10 +6,10 @@ from .grading import grade,valid_peer
 def ratio(a,b):
     return a/b if a is not None and b is not None and b>0 else None
 
-def trend(values):
+def trend(values,relative=False):
     if len(values)<7:return '数据不足'
     mean=statistics.mean(values)
-    if mean<1:return '低销量型'
+    if mean<1 and not relative:return '低销量型'
     peaks=[i for i,x in enumerate(values) if x>mean*2 and (i==0 or values[i-1]<=mean*2)]
     if len(peaks)>=2:return '多次高峰型'
     if len(peaks)==1:return '单次爆发型'
@@ -24,8 +24,8 @@ def product(snapshot, peers=(),rules=None):
     import json
     curve=json.loads(s['curve'] or '[]') if isinstance(s['curve'],str) else (s['curve'] or [])
     unknown=scope_unknown(s.get('notes'));denominator=None if unknown else c
-    rate=ratio(o,denominator);per_seller=ratio(sales,o);per_creator=ratio(sales,denominator);shape=trend(curve)
-    result={'达人出单率':rate,'出单达人人均销量':per_seller,'参与达人人均销量':per_creator,'销量趋势':shape,'曲线来源':'读图估算，仅趋势参考' if curve_source(s.get('notes'))=='读图估算' else '用户录入或未提供曲线'}
+    rate=ratio(o,denominator);per_seller=ratio(sales,o);per_creator=ratio(sales,denominator);shape=trend(curve,relative=curve_source(s.get('notes'))=='相对走势')
+    result={'达人出单率':rate,'出单达人人均销量':per_seller,'参与达人人均销量':per_creator,'销量趋势':shape,'曲线来源':{'相对走势':'相对走势0–100，不代表销量','读图估算':'读图估算，仅趋势参考'}.get(curve_source(s.get('notes')),'用户录入或未提供曲线')}
     decision=grade(s,peers,shape,rules);result.update(decision)
     ranks=decision.get('同类百分位',{})
     result.update({'市场需求':f'同类销量百分位 {ranks["总销量"]:.0f}%' if ranks else '同类有效样本或数据不足，暂不排名',

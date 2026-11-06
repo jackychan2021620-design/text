@@ -209,9 +209,10 @@ class Editor(QDialog):
             value=self.fields['screenshot'].text()
             if not value:raise ValueError('请先选择包含销量走势图的截图')
             path=self.store.asset(value) if value.startswith('assets/') else Path(value)
-            dialog=CurveDialog(path,getattr(self,'last_ocr_words',[]),parent=self)
+            words=self.last_ocr_words if getattr(self,'ocr_source',None)==value else self.store.ocr_layout(value)
+            dialog=CurveDialog(path,words,parent=self);dialog.wordsReady.connect(lambda words:self.store.save_ocr_layout(value,words))
             if dialog.exec():
-                result=dialog.result_data;self.fields['curve'].set_curve(result['values'],'读图估算',result['note'])
+                result=dialog.result_data;self.fields['curve'].set_curve(result['values'],result.get('source','读图估算'),result['note'])
                 self.fields['confirmed'].setChecked(False)
                 self.notice.setText('销量走势图已更新，请核对后保存。')
         except (ValueError,OSError) as exc:self.notice.setText(str(exc))
@@ -306,13 +307,13 @@ class Editor(QDialog):
         if getattr(self,'ocr_source',self.fields['screenshot'].text())!=self.fields['screenshot'].text():
             self.notice.setText('截图已更换或移除，未应用旧截图的识别结果。');return
         if isinstance(document,str):document={'text':document}
-        self.raw_ocr=document['text'];self.draft_timer.start(500);self.last_ocr_words=document.get('words',[]);proposals=propose_fields(document,self.table)
+        self.raw_ocr=document['text'];self.draft_timer.start(500);self.last_ocr_words=document.get('words',[]);self.store.save_ocr_layout(self.fields['screenshot'].text(),self.last_ocr_words);proposals=propose_fields(document,self.table)
         review=OCRReviewDialog(self.table,proposals,self.values(),self.store.asset(self.fields['screenshot'].text()),self,ocr_text=document['text'])
         review.words=document.get('words',[])
         if review.exec():
             for key,value in review.approved.items():self.fields[key].setText(str(value))
             if review.curve_result and 'curve' in self.fields:
-                self.fields['curve'].set_curve(review.curve_result['values'],'读图估算',review.curve_result['note'])
+                self.fields['curve'].set_curve(review.curve_result['values'],review.curve_result.get('source','读图估算'),review.curve_result['note'])
             if 'creators' in review.approved and proposals.get('creators',{}).get('warning') and hasattr(self,'creator_scope'):self.creator_scope.setCurrentIndex(1)
             if 'confirmed' in self.fields:self.fields['confirmed'].setChecked(False)
             self.notice.setText(f'已填入 {len(review.approved)} 项待核对指标。请对照原图检查，勾选“已核对”后保存；未识别字段可手动填写。')
@@ -493,7 +494,9 @@ class MainWindow(QMainWindow):
                 self.ai_scope.setCurrentIndex(max(0,self.ai_scope.findData(scope)))
             index=self.nav.currentRow();self.clear(str(index));self.layout.addWidget(label(self.nav.currentItem().text() if self.nav.currentItem() else '工作台',True))
             [self.home,self.books,self.collection,self.products,self.comparison,self.ai_page,self.videos,self.history,self.settings_page,self.monitor_page][max(0,index)]()
-            self.restore_view();configure_controls(self.center)
+            self.restore_view()
+            for panel in self.center.findChildren(MonitorPanel):panel.choose()
+            configure_controls(self.center)
         except Exception as exc:
             self.last_error=str(exc);self.layout.addWidget(label('此页暂时无法显示，可切换其他栏目或重试。'));self.toolbar([('重试',self.refresh)]);self.statusBar().showMessage(str(exc))
         finally:
@@ -787,7 +790,7 @@ class MainWindow(QMainWindow):
                         self.tray.showMessage(kind,r['名称']+' 已到期，请更新数据',QSystemTrayIcon.MessageIcon.Information,10000);self.store.settings({key:stamp})
         except Exception as exc:self.statusBar().showMessage('自动维护失败：'+str(exc))
     def workers_busy(self):
-        return self.monitor.busy() or bool(self.worker and self.worker.isRunning()) or bool(self.backup_worker and self.backup_worker.isRunning())
+        return any(w.isRunning() for w in getattr(QApplication.instance(),'_curve_workers',set())) or self.monitor.busy() or bool(self.worker and self.worker.isRunning()) or bool(self.backup_worker and self.backup_worker.isRunning())
     def finish_pending_close(self):
         if self.pending_quit and not self.workers_busy():QTimer.singleShot(0,self.close)
     def quit_app(self):
@@ -797,5 +800,6 @@ class MainWindow(QMainWindow):
         if self.workers_busy():
             self.pending_quit=True;self.quitting=True
             if self.monitor.busy():self.monitor.stop()
+            for worker in getattr(QApplication.instance(),'_curve_workers',set()):worker.requestInterruption()
             event.ignore();toast(self,'正在结束后台任务，完成后会自动退出。');return
         self.timer.stop();self.monitor.shutdown();self.tray.hide();event.accept()
