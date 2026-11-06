@@ -70,7 +70,9 @@ def test_image_download_decodes_and_marks_partial_failure(app,tmp_path,monkeypat
     monkeypatch.setattr('studio.xhs.requests.get',get)
     worker=ImageWorker(parse_note(payload(),URL));result=[];worker.ready.connect(result.append);worker.run()
     try:
-        assert len(result[0])==2 and Path(result[0][0]['path']).exists()
+        assert len(result[0])==2
+        assert result[0][0]['path'] is not None,result[0][0]['error']
+        assert Path(result[0][0]['path']).exists()
         assert result[0][1]['path'] is None and '403' in result[0][1]['error']
         assert all(c['allow_redirects'] is False for c in calls)
     finally:worker.cleanup()

@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse,urlunparse
 
 import requests
-from PySide6.QtCore import QThread,Signal
+from PySide6.QtCore import QThread,Signal,QFile,QIODevice
 from PySide6.QtGui import QImageReader
 
 NOTE_HOSTS={'xiaohongshu.com','www.xiaohongshu.com','xhslink.com','xhslink.cn'}
@@ -141,10 +141,14 @@ class ImageWorker(QThread):
                                 size+=len(chunk)
                                 if size>25*1024*1024:raise ValueError('单张图片超过25MB')
                                 file.write(chunk)
-                    reader=QImageReader(str(path))
-                    dimension=reader.size()
-                    if not reader.canRead() or dimension.width()*dimension.height()>60_000_000:raise ValueError('图片格式不支持或分辨率过大')
-                    image=reader.read()
+                    device=QFile(str(path))
+                    if not device.open(QIODevice.OpenModeFlag.ReadOnly):raise ValueError('无法打开下载图片')
+                    try:
+                        reader=QImageReader(device)
+                        dimension=reader.size()
+                        if not reader.canRead() or dimension.width()*dimension.height()>60_000_000:raise ValueError('图片格式不支持或分辨率过大')
+                        image=reader.read()
+                    finally:device.close()
                     if image.isNull():raise ValueError('图片不能完整解码')
                     # Canonical PNG keeps all decoded pixels, strips external metadata,
                     # and makes stored references portable without codec assumptions.

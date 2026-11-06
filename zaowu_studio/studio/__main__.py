@@ -1,5 +1,5 @@
 import sys
-from PySide6.QtCore import QLockFile,QTimer,QCoreApplication,Qt,QUrl
+from PySide6.QtCore import QLockFile,QTimer,QCoreApplication,Qt,QUrl,QEvent
 from PySide6.QtWidgets import QApplication,QMessageBox
 from .store import Store,data_dir
 from .ui import MainWindow
@@ -50,6 +50,11 @@ def main():
             return 1
         QMessageBox.critical(None,'工作台启动未完成','无法加载本地资料，请检查数据目录和磁盘空间。\n\n'+str(exc));return 1
     finally:
+        if browser_smoke and 'window' in locals() and hasattr(window,'_smoke_page'):
+            window._smoke_page.deleteLater()
+            QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+            window._smoke_profile.deleteLater()
+            QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
         if store:store.close()
         lock.unlock()
 
