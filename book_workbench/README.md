@@ -7,7 +7,7 @@
 
 ## Windows用户：直接运行
 
-**[上一版V1.1.6 Windows安装版与便携版](https://github.com/jackychan2021620-design/text/actions/runs/42170031623/artifacts/13480569109)**（需登录GitHub，约499MB）。修复跨页后侧边栏无法切换，监测改为内置浏览器正常登录／读取动态网页；通过141项测试、实际EXE／中文路径安装、浏览器内核离线检查和Defender扫描。仍未正式签名，未确认Chrome放行；三个真实账号仍需联网验收。
+**[下载V1.1.7 Windows安装版与便携版](https://github.com/jackychan2021620-design/text/actions/runs/42210376658/artifacts/13498494601)**（需登录GitHub，约236MB）。抖音监测改用系统Edge／Chrome专用窗口，增加后续批次与近期作品读取、书名补查；曲线自动预览，支持相对走势与手动描绘。158项回归及Windows实际EXE／中文路径安装、浏览器画面／点击／近期批次读取、曲线提取和Defender扫描通过。三个真实账号仍需本机登录后联网验收；仍未正式签名，未确认Chrome放行。
 
 Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
 

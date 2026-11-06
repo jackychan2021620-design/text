@@ -6,7 +6,9 @@ Windows改为监测专用Edge／Chrome，源码保留非Windows的Qt兼容路径
 
 本地158项测试通过：包含时间单位／字符串格式、11月记录不丢弃、未知赞数保留、约数保守下界、挂车与音乐等非商品锚点隔离、缺字段刷新保留旧数据、初始旧置顶批次后继续加载、浅／深／JPEG曲线、小缺口、轴刻度拟合、OCR布局备份恢复、相对走势单位与来源、手动描绘。Windows系统浏览器的可见像素与点击检查在Windows构建中执行，Linux本地不能替代该项验收。
 
-正在构建Windows V1.1.7，完成前下载区仍标为上一版。
+Windows V1.1.7 [构建42210376658](https://github.com/jackychan2021620-design/text/actions/runs/42210376658) 已成功，源码 `baf214d`。Windows完整测试通过；实际打包EXE及中文目录安装后的EXE均验证系统浏览器画面色块、真实坐标点击、DocumentCreation注入、旧置顶后11月新作品及公开商品字段读取、登录暂停、曲线提取、内置OCR、保存和导航恢复。安装包和展开目录通过Defender扫描。以上网页数据来自离线测试页面，不能作为三个真实账号已可用的证明。
+
+[下载V1.1.7安装版与便携版](https://github.com/jackychan2021620-design/text/actions/runs/42210376658/artifacts/13498494601)，约236MB，安装文件 `BookWorkbench-Setup-1.1.7-Windows-x64.exe`。外层GitHub附件SHA256：`a04578033016f05f21c85f3e49f5de3d6c58f6a730c51c32fe6f528273c01468`。原AppId、数据库版本1与资料目录保持，退出旧版（包括托盘）后覆盖安装保留资料。首次需在新的监测专用浏览器窗口重新登录；不迁移旧Qt浏览器Cookie。程序未正式签名，扫描通过不表示Chrome放行。
 
 ## V1.1.6：稳定切页与动态浏览器读取
 
