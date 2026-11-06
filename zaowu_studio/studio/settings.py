@@ -68,6 +68,25 @@ Key 使用独立的系统凭据条目，不写入 SQLite。安全凭据库不可
 
 模型从官方接口返回后选择，未写死模型名。连接测试只验证模型列表；聊天生成需要另行验证。'''),1)
         tabs.addTab(ai,'AI 连接')
+        vision=QWidget();vl=QVBoxLayout(vision);vf=QFormLayout()
+        self.vision_provider=QComboBox();self.vision_provider.addItems(('阿里云百炼 / Qwen 视觉','OpenAI 视觉'))
+        self.vision_base=QLineEdit(self.store.setting('vision_base','https://dashscope.aliyuncs.com/compatible-mode/v1'))
+        if 'api.openai.com' in self.vision_base.text():self.vision_provider.setCurrentIndex(1)
+        self.vision_provider.currentIndexChanged.connect(lambda i:self.vision_base.setText('https://api.openai.com/v1' if i else 'https://dashscope.aliyuncs.com/compatible-mode/v1'))
+        self.vision_key=QLineEdit();self.vision_key.setEchoMode(QLineEdit.EchoMode.Password);self.vision_key.setPlaceholderText('此处填写看图服务的 Key，与 DeepSeek 分开')
+        self.vision_model=QLineEdit(self.store.setting('vision_model'));self.vision_model.setPlaceholderText('填写服务商控制台中可用的视觉模型 ID')
+        self.vision_persist=QCheckBox('保存到系统安全凭据库');self.vision_persist.setChecked(sys.platform=='win32')
+        vf.addRow('看图服务',self.vision_provider);vf.addRow('官方接口',self.vision_base);vf.addRow('看图 API Key',self.vision_key);vf.addRow('视觉模型 ID',self.vision_model);vf.addRow('',self.vision_persist);vl.addLayout(vf)
+        self.vision_test_button=button('测试图片连接（会调用模型）',self.test_vision,True);vl.addWidget(self.vision_test_button)
+        self.vision_status=label('测试只发送软件图标，不发送门店资料。视觉服务需要单独配置；没有配置时仍可收藏图片并使用文案分析。','muted',True);vl.addWidget(self.vision_status)
+        vl.addWidget(document('''### 真正看图后再给拍摄方案
+
+“看图拍摄方案”会按原笔记顺序发送已收藏的全部图片，并预览图片数量、发送清单和文字。确认后才调用视觉模型。
+
+模型 ID 以服务商控制台和权限为准，不根据名字猜测。阿里云官方 Qwen3-VL 仓库给出的兼容地址为本页默认地址。
+
+Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会把 DeepSeek 文字接口冒充看图接口。
+'''),1);tabs.addTab(vision,'图片分析')
         data=QWidget();data_layout=QVBoxLayout(data)
         data_layout.addWidget(label('资料保存在：'+str(self.store.root),'muted',True))
         data_layout.addWidget(button('备份整个工作台资料',self.backup))
@@ -107,13 +126,38 @@ Key 使用独立的系统凭据条目，不写入 SQLite。安全凭据库不可
             if key:
                 if self.persist.isChecked():save_api_key(key)
                 self.window.runtime_key=key
+            vision_base=endpoint(self.vision_base.text().strip(),vision=True)
+            vision_key=self.vision_key.text().strip()
+            if vision_key:
+                if self.vision_persist.isChecked():save_api_key(vision_key,vision=True)
+                self.window.runtime_vision_key=vision_key
             set_autorun(self.autorun.isChecked())
             values={'profile':json.dumps(self.profile.values(),ensure_ascii=False),'weekly_minutes':weekly,'research_minutes':research,
-                    'api_base':base,'model':self.model.currentText(),'background':int(self.background.isChecked())}
+                    'api_base':base,'model':self.model.currentText(),'background':int(self.background.isChecked()),
+                    'vision_base':vision_base,'vision_model':self.vision_model.text().strip()}
             with self.store.transaction():
                 for k,v in values.items():self.store.db.execute('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(k,str(v)))
-            self.key.clear();self.notice.setText('设置已保存。');self.window.refresh()
+            self.key.clear();self.vision_key.clear();self.notice.setText('设置已保存。');self.window.refresh()
         except Exception as exc:self.notice.setText(str(exc))
+
+    def test_vision(self):
+        if self.worker and self.worker.isRunning():return
+        model=self.vision_model.text().strip()
+        if not model:self.vision_status.setText('请先填写服务商控制台中可用的视觉模型 ID。');return
+        import base64
+        from .ui import ROOT
+        raw=(ROOT/'resources'/'brand.png').read_bytes()
+        messages=[{'role':'user','content':[{'type':'text','text':'请简短描述测试图的形状和颜色。'},
+            {'type':'image_url','image_url':{'url':'data:image/png;base64,'+base64.b64encode(raw).decode('ascii')}}]}]
+        key=self.vision_key.text().strip() or getattr(self.window,'runtime_vision_key','') or api_key(vision=True)
+        self.worker=AIWorker(self.vision_base.text().strip(),key,model,messages,self,vision=True)
+        chunks=[]
+        def receive(text):chunks.append(text);self.vision_status.setText(''.join(chunks))
+        self.worker.delta.connect(receive);self.worker.failed.connect(self.vision_status.setText)
+        def completed(ok):
+            self.vision_test_button.setEnabled(True)
+            if ok:self.vision_status.setText('图像请求已收到回复，请检查描述是否符合左侧软件图标。\n'+''.join(chunks))
+        self.worker.completed.connect(completed);self.vision_test_button.setEnabled(False);self.vision_status.setText('正在发送软件图标测试…');self.worker.start()
 
     def backup(self):
         path,_=QFileDialog.getSaveFileName(self,'保存完整资料包','造物工作台备份.zip','ZIP (*.zip)')

@@ -5,6 +5,8 @@ from .ai import AIWorker,SYSTEM,api_key
 from .widgets import label,button,document,confirm,error
 
 TASKS={
+ '拍摄与发布方案':'仅根据已读取文案、已有文字观察和本店服务，制定可执行的拍摄与发笔记方案。明确写出“未分析图片画面”。列出要拍什么、机位、顺序、道具、文字结构和本地咨询引导；没有画面依据时将构图作为待验证建议，不声称逐图拆解。',
+ '看图拍摄方案':'结合实际附图和笔记文案逐张分析，先按原顺序写出每张图片实际展示的内容、景别、构图与作用。再结合造物手作真实产品，给出可执行的拍摄清单（拍什么、机位、光线、道具、可用素材与补拍）、建议发布图片顺序、标题方向和正文结构、面向汕头顾客的咨询引导。不能把原作者作品或评价冒充本店；看不清的部分明确说明，不根据图片推断曝光或成交。',
  '案例拆解':'分析给定案例，按：目标顾客、开头机制、证据、本地相关性、制作负担、可测试选题。区分已知和未知，不根据点赞认定获客有效。',
  '选题计划':'结合当前业务、参考案例、真实产品、历史反馈与时间上限，提出未来两周最多4条选题。严格返回 JSON 对象 {"items":[...]}。每条字段 topic,audience,hypothesis,angle,missing,platform,plan_date 为字符串；offer_id,reference_id 为资料中存在的整数编号或null。platform只能取小红书、抖音、美团、其他。plan_date为YYYY-MM-DD。明确参考依据、待验证假设、补拍清单与制作负担。没有案例时在hypothesis写明缺口，不冒充已验证。',
  '素材检查':'检查当前选题和选中素材的文字描述，列出可复用内容及最少补拍清单，优先减少制作时间。未发送图片视频，不得声称识别画面。',
@@ -71,21 +73,36 @@ class AIDialog(QDialog):
 
     def generate(self):
         if self.worker and self.worker.isRunning():return
-        key=self.window.runtime_key or api_key();model=self.store.setting('model')
-        if not key or not model:error(self,'请先在设置中输入 API Key，获取可用模型并保存。');return
+        vision=self.task=='看图拍摄方案'
+        key=(self.window.runtime_vision_key or api_key(vision=True)) if vision else (self.window.runtime_key or api_key())
+        model=self.store.setting('vision_model' if vision else 'model')
+        if not key or not model:error(self,'请先在“门店与设置 → 图片分析”配置视觉服务的 Key 和模型。图片收藏与文案方案不需要看图模型。' if vision else '请先在设置中输入 API Key，获取可用模型并保存。');return
         text=self.input.toPlainText().strip() or TASKS[self.task]
-        messages=[{'role':'system','content':SYSTEM+'\n任务资料：\n'+json.dumps(self.context,ensure_ascii=False)}]+self.history+[{'role':'user','content':text}]
-        if len(json.dumps(messages,ensure_ascii=False))>100000:error(self,'资料与对话较长，请保存结果后重新打开任务。');return
+        content=text
+        if vision:
+            from .vision import prepare_images
+            try:
+                reference_id=self.context.get('reference',{}).get('id')
+                if not reference_id:raise ValueError('请从已收藏图文案例打开看图分析')
+                parts,manifest=prepare_images(self.store,reference_id)
+            except Exception as exc:error(self,exc);return
+            self.context['reference_media']={'pixel_input':True,'images':manifest,'note':'会发送清单中的全部图片像素，长边最多1024；原图仍保存在本机'}
+            content=[{'type':'text','text':text}]+parts
+        messages=[{'role':'system','content':SYSTEM+'\n任务资料：\n'+json.dumps(self.context,ensure_ascii=False)}]+self.history+[{'role':'user','content':content}]
+        from .vision import redact_images
+        safe_messages=redact_images(messages)
+        if len(json.dumps(safe_messages,ensure_ascii=False))>100000:error(self,'资料与对话较长，请保存结果后重新打开任务。');return
         dialog=QDialog(self);dialog.setWindowTitle('确认本次发送内容');dialog.resize(740,640)
         layout=QVBoxLayout(dialog)
-        layout.addWidget(label('以下文字将发送到 DeepSeek。素材文件不会上传。请核查自由文本是否包含私人信息。','muted',True))
-        preview=QPlainTextEdit();preview.setReadOnly(True);preview.setPlainText(json.dumps(messages,ensure_ascii=False,indent=2));layout.addWidget(preview)
+        layout.addWidget(label(f'将向已配置的视觉服务发送 {len(manifest)} 张参考图片和以下文字。图片清单包含尺寸与哈希，预览不展开 Base64。' if vision else '以下文字将发送到 DeepSeek，本次不发送图片像素。请核查自由文本是否包含私人信息。','muted',True))
+        preview=QPlainTextEdit();preview.setReadOnly(True);preview.setPlainText(json.dumps(safe_messages,ensure_ascii=False,indent=2));layout.addWidget(preview)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
         if not dialog.exec():return
-        self.run_id=self.store.start_run(self.task,self.context['business'],{'context':self.context,'messages':messages})
+        self.run_id=self.store.start_run(self.task,self.context['business'],{'context':self.context,'messages':safe_messages})
         self.buffer='';self.ok=False;self.pending_user=text;self.input.clear();self.apply.setEnabled(False);self.remember.setEnabled(False)
-        self.worker=AIWorker(self.store.setting('api_base','https://api.deepseek.com'),key,model,messages,self)
+        base=self.store.setting('vision_base','https://dashscope.aliyuncs.com/compatible-mode/v1') if vision else self.store.setting('api_base','https://api.deepseek.com')
+        self.worker=AIWorker(base,key,model,messages,self,vision=vision)
         self.worker.delta.connect(self.receive);self.worker.failed.connect(self.status.setText);self.worker.completed.connect(self.complete)
         self.send.setEnabled(False);self.stop.setEnabled(True);self.status.setText('正在生成…');self.timer.start();self.worker.start()
 

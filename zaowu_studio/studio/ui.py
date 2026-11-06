@@ -20,7 +20,7 @@ ICON=ROOT/'resources'/'brand.ico'
 class MainWindow(QMainWindow):
     TITLES=('今日工作','内容工作室','资料库','效果复盘')
     def __init__(self,store):
-        super().__init__();self.store=store;self.runtime_key='';self.current=0;self.force_quit=False
+        super().__init__();self.store=store;self.runtime_key='';self.runtime_vision_key='';self.current=0;self.force_quit=False
         self.setWindowTitle('造物手作 · AI 获客与内容运营工作台');self.setWindowIcon(QIcon(str(ICON)))
         self.resize(1280,840);self.setMinimumSize(980,650);self.setStyleSheet(STYLE)
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
@@ -66,6 +66,8 @@ class MainWindow(QMainWindow):
     def home(self):
         body=QWidget();layout=QVBoxLayout(body);layout.setContentsMargins(0,0,0,0);layout.setSpacing(22)
         eyebrow=QHBoxLayout();eyebrow.addWidget(label(date.today().strftime('%Y.%m.%d')+'  /  今天只推进一步','eyebrow'));eyebrow.addStretch();layout.addLayout(eyebrow)
+        quick=QHBoxLayout();link=QLineEdit();link.setPlaceholderText('发现好笔记？粘贴小红书分享文字或链接…')
+        quick.addWidget(link,1);quick.addWidget(button('读取并收藏',lambda:self.import_xhs(link.text()),True));layout.addLayout(quick)
         hero,inside=frame('hero');inside.setContentsMargins(30,28,30,28)
         piece=self.store.next_piece(self.focus);offers=self.store.rows('offers',self.focus);refs=self.store.rows('references',self.focus)
         if piece:
@@ -137,6 +139,8 @@ class MainWindow(QMainWindow):
         root=QWidget();layout=QVBoxLayout(root);layout.setContentsMargins(10,18,10,10)
         tools=QHBoxLayout();search=QLineEdit();search.setPlaceholderText('搜索资料…');tools.addWidget(search,1)
         if table=='assets':tools.addWidget(button('导入图片 / 视频',self.import_assets,True))
+        elif table=='references':
+            tools.addWidget(button('粘贴小红书链接',lambda:self.import_xhs(),True));tools.addWidget(button('手动新增',lambda:self.edit_entity(table)))
         elif table!='ai_runs':tools.addWidget(button('新增',lambda:self.edit_entity(table),True))
         layout.addLayout(tools)
         split=QSplitter();items=QListWidget();details=document();split.addWidget(items);split.addWidget(details);split.setSizes([310,540]);layout.addWidget(split,1)
@@ -157,6 +161,11 @@ class MainWindow(QMainWindow):
             if table in TABLES:
                 # Render values as text via Markdown only in display; no HTML or external links execute.
                 text='\n\n'.join('### '+field.label+'\n\n'+( ('允许' if row[field.key] else '不分享') if field.kind=='bool' else str(row[field.key] or '尚未填写')) for field in TABLES[table][1] if field.key!='business')
+                if table=='references':
+                    images=self.store.reference_images(row['id'])
+                    if images:
+                        count=sum(bool(i['path']) and Path(i['path']).is_file() for i in images)
+                        text=f'**已收藏图文：{count} / {len(images)} 张图片。点击“查看图文”按原顺序浏览。**\n\n'+text
             elif table=='assets':text=f"## {row['name']}\n\n{row['kind']}\n\n{row['description'] or '尚未补充描述。'}\n\n文件保存在本地，AI 只使用你填写的描述。"
             else:text=f"## {row['task']} · {row['status']}\n\n{row['output'] or '没有收到完整内容。'}"
             details.setMarkdown(text)
@@ -173,6 +182,12 @@ class MainWindow(QMainWindow):
         actions.addWidget(button('查看记录' if table=='ai_runs' else '编辑资料',edit))
         items.itemDoubleClicked.connect(lambda _:edit())
         if table=='references':
+            def view_note():
+                row_id=selected()
+                if row_id:
+                    from .xhs_dialog import ReferenceDialog
+                    ReferenceDialog(self,row_id).exec()
+            actions.addWidget(button('查看图文',view_note))
             def analyze():
                 row_id=selected()
                 if row_id:self.ask('案例拆解',reference_id=row_id)
@@ -257,6 +272,14 @@ class MainWindow(QMainWindow):
             AIDialog(self,task,context,apply=apply).exec();self.refresh()
         except Exception as exc:error(self,exc)
 
+    def import_xhs(self,text=''):
+        try:
+            from .xhs_dialog import ImportDialog,ReferenceDialog
+            dialog=ImportDialog(self,text)
+            if dialog.exec() and dialog.reference_id:
+                self.refresh();ReferenceDialog(self,dialog.reference_id).exec()
+        except Exception as exc:error(self,'无法打开笔记读取窗口：'+str(exc))
+
     def export_review(self):
         path,_=QFileDialog.getSaveFileName(self,'导出反馈','内容反馈.csv','CSV (*.csv)')
         if path:
@@ -272,8 +295,8 @@ class MainWindow(QMainWindow):
     def quit_app(self):self.force_quit=True;self.close()
 
     def closeEvent(self,event):
-        from .ai import AIWorker
-        workers=[w for w in self.findChildren(AIWorker) if w.isRunning()]
+        from PySide6.QtCore import QThread
+        workers=[w for w in self.findChildren(QThread) if w.isRunning() and hasattr(w,'cancel')]
         if workers:
             for worker in workers:worker.cancel()
             event.ignore();QTimer.singleShot(500,self.close);return

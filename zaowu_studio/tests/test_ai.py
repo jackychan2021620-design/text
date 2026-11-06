@@ -39,6 +39,23 @@ def test_no_key_and_official_host_boundary():
     with pytest.raises(ValueError):endpoint('http://api.deepseek.com')
     worker=AIWorker('https://api.deepseek.com','');errors=[];worker.failed.connect(errors.append);worker.run();assert errors
 
+def test_visual_official_endpoints_are_separate_from_text_endpoint():
+    assert endpoint('https://dashscope.aliyuncs.com/compatible-mode/v1',vision=True).endswith('/v1')
+    assert endpoint('https://api.openai.com/v1',vision=True)=='https://api.openai.com/v1'
+    with pytest.raises(ValueError):endpoint('https://dashscope.aliyuncs.com/compatible-mode/v1')
+    with pytest.raises(ValueError):endpoint('https://api.deepseek.com',vision=True)
+    with pytest.raises(ValueError):endpoint('https://evil.example/v1',vision=True)
+
+def test_visual_request_really_passes_image_content(monkeypatch):
+    captured=[]
+    def post(url,**kwargs):captured.append((url,kwargs));return Response(['data: {"choices":[{"delta":{"content":"image reply"}}]}','data: [DONE]'])
+    monkeypatch.setattr(requests,'post',post)
+    messages=[{'role':'user','content':[{'type':'image_url','image_url':{'url':'data:image/png;base64,dGVzdA=='}}]}]
+    worker=AIWorker('https://dashscope.aliyuncs.com/compatible-mode/v1','test-key','configured-vision',messages,vision=True)
+    worker.run()
+    assert captured[0][0]=='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
+    assert captured[0][1]['json']['messages']==messages
+
 def test_generated_structures_only_allow_expected_fields():
     draft={k:'草稿' for k in ('title','cover','body','script','cta')};draft['sql']='not allowed'
     assert 'sql' not in parse_draft('```json\n'+json.dumps(draft)+'\n```')
