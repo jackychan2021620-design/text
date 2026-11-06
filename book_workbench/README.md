@@ -7,7 +7,7 @@
 
 ## Windows用户：直接运行
 
-**[上一版V1.1.5 Windows安装版与便携版](https://github.com/jackychan2021620-design/text/actions/runs/42051606095/artifacts/13427937145)**（需登录GitHub，约236MB）。本版改为单本书三档推荐，加入连续交互与公开账号检查试用页；通过Windows测试、真实EXE／安装及Defender扫描。仍未正式签名，未确认Chrome放行。
+**[下载V1.1.6 Windows安装版与便携版](https://github.com/jackychan2021620-design/text/actions/runs/42170031623/artifacts/13480569109)**（需登录GitHub，约499MB）。修复跨页后侧边栏无法切换，监测改为内置浏览器正常登录／读取动态网页；通过141项测试、实际EXE／中文路径安装、浏览器内核离线检查和Defender扫描。仍未正式签名，未确认Chrome放行；三个真实账号仍需联网验收。
 
 Windows构建由 [Book Workbench Windows App](https://github.com/jackychan2021620-design/text/actions/workflows/book-workbench-windows.yml) 工作流生成。选择成功的构建，在 Artifacts 下载 `BookWorkbench-Windows-x64`（需要登录GitHub）。只有构建成功并上传了附件，才能视为已有Windows程序包。
 
