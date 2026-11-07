@@ -15,7 +15,7 @@ SYSTEM = '''你是造物手作在汕头的本地获客与内容运营助手。�
 分别标记观察事实、待验证解释和下一步实验。公开点赞不代表曝光、当地覆盖、订单或有效获客；小样本不能证明因果。
 明确目标顾客、开头切入、实拍证据、本地相关性、购买承接、制作负担。优先利用已有素材和预算内工作量。
 不能编造价格、顾客评价、活动案例、销量、公开数据或经营成果。缺少资料应指出具体缺口。
-只有请求实际含 image_url 图片时才可分析画面，否则只能依据文字描述，不得假装看过图像或访问了网页。参考笔记的图片不能冒充本店作品。
+只有请求实际含 image_url 图片时才可声称直接看过画面；资料附有视觉服务观察时，可以引用并注明来源，不能自称亲自识图。不含图片或视觉观察时只能依据文字，不得假装看过图像或访问了网页。参考笔记的图片不能冒充本店作品。
 不索取客户姓名、手机号或微信号，不建议无许可群发。不得修改数据库、发布、投放或作价格和交付承诺。
 文案使用门店真实产品事实，参考表达方式，不复制别人的文案、照片或案例。
 生成结果是待人工检查的草稿，不能自称已执行。通常输出简明 Markdown；任务明确要求 JSON 时严格按结构返回。'''
@@ -32,6 +32,16 @@ def api_key(vision=False):
         return keyring.get_password(VISION_SERVICE if vision else SERVICE,'api-key') or ''
     except Exception:
         return ''
+
+def configured_vision_key(window,base=None):
+    """Do not reuse a saved credential when its vision provider was changed."""
+    saved_base=window.store.setting('vision_base','https://dashscope.aliyuncs.com/compatible-mode/v1')
+    base=(base or saved_base).rstrip('/')
+    runtime_base=getattr(window,'runtime_vision_base',saved_base).rstrip('/')
+    if getattr(window,'runtime_vision_key','') and runtime_base==base:return window.runtime_vision_key
+    credential_base=window.store.setting('vision_key_base',saved_base).rstrip('/')
+    if credential_base==base:return api_key(vision=True)
+    return ''
 
 def save_api_key(value,vision=False):
     import keyring
@@ -56,8 +66,39 @@ def endpoint(base,vision=False):
     return base.rstrip('/')
 
 def safe_error(response):
-    labels={400:'请求格式或模型参数不受支持',401:'API Key 无效或已过期',402:'API 余额不足',403:'访问被拒绝，请检查网络策略及账户权限',404:'API 路径或模型不存在',429:'请求过于频繁，请稍后重试',500:'DeepSeek 服务内部错误',503:'DeepSeek 服务繁忙'}
+    labels={400:'请求格式或模型参数不受支持',401:'API Key 无效或已过期',402:'API 余额不足',403:'访问被拒绝，请检查网络策略及账户权限',404:'API 路径或模型不存在',429:'请求过于频繁，请稍后重试',500:'AI 服务内部错误',503:'AI 服务繁忙'}
     return f"HTTP {response.status_code}：{labels.get(response.status_code,'服务请求失败')}"
+
+def chat_stream(base,key,model,messages,cancelled,vision=False):
+    """Stream one official-provider request; credentials never cross providers."""
+    base=endpoint(base,vision)
+    if not key:raise ValueError('请先配置看图服务的 API Key。' if vision else '请先配置 DeepSeek API Key。')
+    if not model:raise ValueError('请先在设置中选择并保存模型。')
+    if cancelled.is_set():raise ValueError('已停止，保留已有结果。')
+    headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'}
+    with requests.post(base+'/chat/completions',headers=headers,json={'model':model,'messages':messages,'stream':True},stream=True,timeout=(10,30),allow_redirects=False) as response:
+        if response.status_code!=200:raise ValueError(safe_error(response))
+        response.encoding='utf-8';finished=False;has_content=False
+        for line in response.iter_lines(decode_unicode=True,chunk_size=128):
+            if cancelled.is_set():raise ValueError('已停止，保留已有结果。')
+            if not line or not line.startswith('data:'):continue
+            raw=line[5:].strip()
+            if raw=='[DONE]':finished=True;break
+            event=json.loads(raw)
+            if 'error' in event:raise ValueError('AI 服务返回错误，已保留收到的部分回复')
+            for choice in event.get('choices',[]):
+                if choice.get('finish_reason') in ('length','content_filter'):raise ValueError('模型回复被截断或拦截，尚未完成；请缩小任务后重试。')
+                content=choice.get('delta',{}).get('content')
+                if content:has_content=True;yield content
+        if cancelled.is_set():raise ValueError('已停止，保留已有结果。')
+        if not finished or not has_content:raise ValueError('回复流未完整结束或无可展示内容，已保留部分内容，可重试。')
+
+def failure_message(exc,vision=False):
+    if isinstance(exc,requests.exceptions.Timeout):return '连接或流式读取超时，请检查网络后重试。部分回复会保留。'
+    if isinstance(exc,requests.exceptions.SSLError):return 'TLS 证书验证失败，请检查系统信任证书；未关闭证书校验。'
+    if isinstance(exc,requests.exceptions.RequestException):return '无法连接'+('图片识别服务' if vision else 'DeepSeek')+'，请检查网络、代理及域名允许列表。'
+    if isinstance(exc,(ValueError,KeyError,TypeError)):return str(exc)
+    return 'AI 请求发生异常，请检查配置后重试。'
 
 class AIWorker(QThread):
     delta = Signal(str)
@@ -96,46 +137,9 @@ class AIWorker(QThread):
                     self.models.emit(models)
                     ok=True
             else:
-                if not self.model:
-                    raise ValueError('请先在系统设置测试连接、获取模型并保存所选模型。')
-                with requests.post(base+'/chat/completions',headers=headers,json={'model':self.model,'messages':self.messages,'stream':True},stream=True,timeout=(10,30),allow_redirects=False) as response:
-                    if response.status_code!=200:
-                        raise ValueError(safe_error(response))
-                    response.encoding='utf-8'
-                    finished=False
-                    has_content=False
-                    for line in response.iter_lines(decode_unicode=True,chunk_size=128):
-                        if self.cancelled.is_set():
-                            break
-                        if not line or not line.startswith('data:'):
-                            continue
-                        raw=line[5:].strip()
-                        if raw=='[DONE]':
-                            finished=True
-                            break
-                        event=json.loads(raw)
-                        if 'error' in event:
-                            raise ValueError('AI 服务返回错误，已保留收到的部分回复')
-                        for choice in event.get('choices',[]):
-                            content=choice.get('delta',{}).get('content')
-                            if content:
-                                has_content=True
-                                self.delta.emit(content)
-                    if self.cancelled.is_set():
-                        self.failed.emit('已停止；部分回复已保存，不会作为完整回答继续发送。')
-                    elif not finished or not has_content:
-                        raise ValueError('回复流未完整结束或无可展示内容，已保留部分内容，可重试。')
-                    else:
-                        ok=True
-        except requests.exceptions.Timeout:
-            self.failed.emit('连接或流式读取超时，请检查网络后重试。部分回复会保留。')
-        except requests.exceptions.SSLError:
-            self.failed.emit('TLS 证书验证失败，请检查系统信任证书；未关闭证书校验。')
-        except requests.exceptions.RequestException:
-            self.failed.emit('无法连接 DeepSeek，请检查网络、代理及域名允许列表。')
-        except (ValueError,KeyError,TypeError) as exc:
-            self.failed.emit(str(exc))
-        except Exception:
-            self.failed.emit('AI 请求发生异常，请检查配置后重试。')
+                for content in chat_stream(base,self.key,self.model,self.messages,self.cancelled,self.vision):self.delta.emit(content)
+                ok=True
+        except Exception as exc:
+            self.failed.emit(failure_message(exc,self.vision))
         finally:
             self.completed.emit(ok)

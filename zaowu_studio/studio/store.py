@@ -284,6 +284,17 @@ class Store:
     def update_run(self,run_id,output,status):
         with self.db: self.db.execute('UPDATE ai_runs SET output=?,status=? WHERE id=?',(output,status,run_id))
 
+    def update_run_context(self,run_id,context):
+        with self.db:self.db.execute('UPDATE ai_runs SET context=? WHERE id=?',(json.dumps(context,ensure_ascii=False),run_id))
+
+    def latest_reference_plan(self,reference_id):
+        reference=self.get('references',reference_id)
+        for row in self.db.execute('SELECT * FROM ai_runs WHERE task=? AND business=? AND status=? ORDER BY id DESC',('看图拍摄方案',reference['business'],'已完成')):
+            try:context=json.loads(row['context'])
+            except ValueError:continue
+            if context.get('context',{}).get('reference',{}).get('id')==reference_id:return dict(row)
+        return None
+
     def backup(self,destination=None):
         folder=self.root/'backups'
         folder.mkdir(exist_ok=True)

@@ -273,7 +273,9 @@ class MainWindow(QMainWindow):
     def ask(self,task,reference_id=None,apply=None):
         try:
             context=self.store.context(self.focus,reference_id=reference_id,task=task)
-            AIDialog(self,task,context,apply=apply).exec();self.refresh()
+            dialog=AIDialog(self,task,context,apply=apply)
+            if task=='看图拍摄方案':QTimer.singleShot(0,dialog.generate)
+            dialog.exec();self.refresh()
         except Exception as exc:error(self,exc)
 
     def import_xhs(self,text=''):

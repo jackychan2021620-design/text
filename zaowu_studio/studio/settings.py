@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidge
     QLineEdit,QComboBox,QCheckBox,QFileDialog)
 from .widgets import label,button,Fields,document,confirm,error,info,scroll,fit_window
 from .model import f
-from .ai import AIWorker,api_key,save_api_key,endpoint
+from .ai import AIWorker,api_key,save_api_key,endpoint,configured_vision_key
 
 PROFILE_FIELDS=[f('name','门店名称'),f('city','所在城市'),f('area','位置与服务范围','long'),
  f('channels','当前账号与购买 / 咨询入口','long'),f('goal','当前最重要的经营目标','long'),
@@ -36,7 +36,7 @@ def set_autorun(enabled):
 
 class SettingsDialog(QDialog):
     def __init__(self,window):
-        super().__init__(window);self.window=window;self.store=window.store;self.worker=None;self.pending_close=False
+        super().__init__(window);self.window=window;self.store=window.store;self.worker=None;self.vision_worker=None;self.pending_close=False
         self.setWindowTitle('设置 · 造物手作');fit_window(self,700,760)
         self.auto_save_model=False;self.test_seconds=0;self.credential_notice=''
         layout=QVBoxLayout(self);layout.setContentsMargins(24,22,24,22)
@@ -67,29 +67,34 @@ class SettingsDialog(QDialog):
 
 Key 使用独立的系统凭据条目，不写入 SQLite。安全凭据库不可用时可只在本次运行使用。
 
-这个标签用于 DeepSeek 文字功能。参考图文可以收藏；只有另行配置看图服务并确认时才会发送图片。
+原来的 Key 保留在本页。配置好“图片识别”后，软件会自动把图片观察交给 DeepSeek 整理拍摄与发布方案，不用来回切换。
 
 模型从官方接口返回后选择，未写死模型名。连接测试只验证模型列表；聊天生成需要另行验证。'''),1)
         tabs.addTab(scroll(ai),'DeepSeek 文字')
         vision=QWidget();vl=QVBoxLayout(vision);vf=QFormLayout()
-        self.vision_provider=QComboBox();self.vision_provider.addItems(('阿里云百炼 / Qwen 视觉','OpenAI 视觉'))
+        vl.addWidget(label('只需配置一次：保留原 DeepSeek Key，在这里另填图片识别服务的 Key 和模型，测试后保存。日常只点“生成拍摄与发布方案”。','muted',True))
+        self.vision_provider=QComboBox();self.vision_provider.addItems(('阿里云百炼 / Qwen 视觉（推荐）','OpenAI 视觉'))
         self.vision_base=QLineEdit(self.store.setting('vision_base','https://dashscope.aliyuncs.com/compatible-mode/v1'))
         if 'api.openai.com' in self.vision_base.text():self.vision_provider.setCurrentIndex(1)
         self.vision_provider.currentIndexChanged.connect(lambda i:self.vision_base.setText('https://api.openai.com/v1' if i else 'https://dashscope.aliyuncs.com/compatible-mode/v1'))
         self.vision_key=QLineEdit();self.vision_key.setEchoMode(QLineEdit.EchoMode.Password);self.vision_key.setPlaceholderText('此处填写看图服务的 Key，与 DeepSeek 分开')
-        self.vision_model=QLineEdit(self.store.setting('vision_model'));self.vision_model.setPlaceholderText('填写服务商控制台中可用的视觉模型 ID')
+        self.vision_model=QLineEdit(self.store.setting('vision_model'));self.vision_model.setPlaceholderText('复制控制台中支持图片输入的模型 ID')
         self.vision_persist=QCheckBox('保存到系统安全凭据库');self.vision_persist.setChecked(sys.platform=='win32')
         vf.addRow('看图服务',self.vision_provider);vf.addRow('官方接口',self.vision_base);vf.addRow('看图 API Key',self.vision_key);vf.addRow('视觉模型 ID',self.vision_model);vf.addRow('',self.vision_persist);vl.addLayout(vf)
-        self.vision_test_button=button('测试图片连接（会调用模型）',self.test_vision,True);vl.addWidget(self.vision_test_button)
+        open_console=button('打开服务商控制台，获取 Key 和模型',lambda:QDesktopServices.openUrl(QUrl('https://platform.openai.com/' if self.vision_provider.currentIndex() else 'https://bailian.console.aliyun.com/')));vl.addWidget(open_console)
+        test_row=QHBoxLayout();self.vision_test_button=button('测试图片连接（会调用模型）',self.test_vision,True);test_row.addWidget(self.vision_test_button)
+        self.vision_cancel_button=button('取消测试',self.cancel_vision_test);self.vision_cancel_button.setEnabled(False);test_row.addWidget(self.vision_cancel_button);vl.addLayout(test_row)
         self.vision_status=label('测试只发送软件图标，不发送门店资料。视觉服务需要单独配置；没有配置时仍可收藏图片并使用文案分析。','muted',True);vl.addWidget(self.vision_status)
-        vl.addWidget(document('''### 真正看图后再给拍摄方案
+        vl.addWidget(document('''### 配好一次，每天只需一个入口
 
-“看图拍摄方案”会按原笔记顺序发送已收藏的全部图片，并预览图片数量、发送清单和文字。确认后才调用视觉模型。
+“生成拍摄与发布方案”会自动完成：识别全部参考图片 → 交给 DeepSeek 整理拍摄清单、发布顺序、标题和正文。开始前只确认一次发送资料。
+
+图片发给本页配置的服务；DeepSeek 接收图片观察文字和门店资料。两个 Key 分开保存，各服务按实际调用量计费。同一方案窗口内修改或重试会复用已完成的图片观察。
 
 模型 ID 以服务商控制台和权限为准，不根据名字猜测。阿里云官方 Qwen3-VL 仓库给出的兼容地址为本页默认地址。
 
 Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会把 DeepSeek 文字接口冒充看图接口。
-'''),1);tabs.addTab(scroll(vision),'图片分析（另需 Key）')
+'''),1);tabs.addTab(scroll(vision),'图片识别')
         data=QWidget();data_layout=QVBoxLayout(data)
         data_layout.addWidget(label('资料保存在：'+str(self.store.root),'muted',True))
         data_layout.addWidget(button('备份整个工作台资料',self.backup))
@@ -158,23 +163,27 @@ Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会�
             base=endpoint(self.base.text().strip());weekly=int(self.weekly.text());research=int(self.research.text())
             if not 1<=weekly<=10080 or not 1<=research<=10080:raise ValueError('时间预算应为1～10080分钟')
             vision_base=endpoint(self.vision_base.text().strip(),vision=True)
+            vision_key=self.vision_key.text().strip()
+            deepseek_key=self.key.text().strip() or self.window.runtime_key or api_key()
+            if vision_key and vision_key==deepseek_key:raise ValueError('DeepSeek Key 应填在“DeepSeek 文字”标签。图片识别需要对应服务的 Key。')
+            old_vision_base=self.store.setting('vision_base','https://dashscope.aliyuncs.com/compatible-mode/v1')
+            credential_base=self.store.setting('vision_key_base',old_vision_base)
+            if vision_base!=old_vision_base and not vision_key:raise ValueError('切换图片识别服务后，请输入新服务对应的 Key，再保存。')
             key=self.key.text().strip();self.credential_notice=''
             if key:
                 self.window.runtime_key=key
                 if self.persist.isChecked():
                     try:save_api_key(key)
                     except Exception:self.credential_notice='系统凭据保存未成功，Key 已在本次运行中生效，重启后需重新输入。'
-            vision_key=self.vision_key.text().strip()
             if vision_key:
-                if vision_key==key or vision_key==self.window.runtime_key:raise ValueError('DeepSeek Key 应填在“DeepSeek 文字”标签。看图服务需要其对应的 Key。')
-                self.window.runtime_vision_key=vision_key
+                self.window.runtime_vision_key=vision_key;self.window.runtime_vision_base=vision_base
                 if self.vision_persist.isChecked():
-                    try:save_api_key(vision_key,vision=True)
+                    try:save_api_key(vision_key,vision=True);credential_base=vision_base
                     except Exception:self.credential_notice+=' 看图 Key 仅在本次运行生效。'
             set_autorun(self.autorun.isChecked())
             values={'profile':json.dumps(self.profile.values(),ensure_ascii=False),'weekly_minutes':weekly,'research_minutes':research,
                     'api_base':base,'model':self.model.currentText(),'background':int(self.background.isChecked()),
-                    'vision_base':vision_base,'vision_model':self.vision_model.text().strip()}
+                    'vision_base':vision_base,'vision_key_base':credential_base,'vision_model':self.vision_model.text().strip()}
             with self.store.transaction():
                 for k,v in values.items():self.store.db.execute('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(k,str(v)))
             self.key.clear();self.vision_key.clear();self.notice.setText('设置已保存。'+self.credential_notice);self.window.refresh()
@@ -183,9 +192,11 @@ Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会�
         except Exception as exc:self.notice.setText(str(exc))
 
     def test_vision(self):
-        if self.worker and self.worker.isRunning():return
+        if self.vision_worker and self.vision_worker.isRunning():return
         typed=self.vision_key.text().strip()
-        if typed and typed in (self.key.text().strip(),self.window.runtime_key):self.vision_status.setText('这是正在使用的 DeepSeek Key，请填到“DeepSeek 文字”；此处需要看图服务对应的 Key。');return
+        if typed and typed==(self.key.text().strip() or self.window.runtime_key or api_key()):self.vision_status.setText('这是正在使用的 DeepSeek Key，请填到“DeepSeek 文字”；此处需要看图服务对应的 Key。');return
+        if self.vision_base.text().strip()!=self.store.setting('vision_base','https://dashscope.aliyuncs.com/compatible-mode/v1') and not typed:
+            self.vision_status.setText('切换服务商后，请输入新服务商的 Key 再测试。');return
         model=self.vision_model.text().strip()
         if not model:self.vision_status.setText('请先填写服务商控制台中可用的视觉模型 ID。');return
         import base64
@@ -193,15 +204,24 @@ Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会�
         raw=(ROOT/'resources'/'brand.png').read_bytes()
         messages=[{'role':'user','content':[{'type':'text','text':'请简短描述测试图的形状和颜色。'},
             {'type':'image_url','image_url':{'url':'data:image/png;base64,'+base64.b64encode(raw).decode('ascii')}}]}]
-        key=self.vision_key.text().strip() or getattr(self.window,'runtime_vision_key','') or api_key(vision=True)
-        self.worker=AIWorker(self.vision_base.text().strip(),key,model,messages,self,vision=True)
+        key=typed or configured_vision_key(self.window,self.vision_base.text().strip())
+        if not key:self.vision_status.setText('请先填写本页所选服务的图片识别 API Key。');return
+        tested_base=self.vision_base.text().strip();tested_model=model
+        self.vision_worker=AIWorker(self.vision_base.text().strip(),key,model,messages,self,vision=True)
         chunks=[]
         def receive(text):chunks.append(text);self.vision_status.setText(''.join(chunks))
-        self.worker.delta.connect(receive);self.worker.failed.connect(self.vision_status.setText)
+        self.vision_worker.delta.connect(receive);self.vision_worker.failed.connect(self.vision_status.setText)
         def completed(ok):
-            self.vision_test_button.setEnabled(True)
-            if ok:self.vision_status.setText('图像请求已收到回复，请检查描述是否符合左侧软件图标。\n'+''.join(chunks))
-        self.worker.completed.connect(completed);self.vision_test_button.setEnabled(False);self.vision_status.setText('正在发送软件图标测试…');self.worker.start()
+            self.vision_test_button.setEnabled(True);self.vision_cancel_button.setEnabled(False)
+            current_key=self.vision_key.text().strip() or configured_vision_key(self.window,self.vision_base.text().strip())
+            if ok and (current_key!=key or self.vision_base.text().strip()!=tested_base or self.vision_model.text().strip()!=tested_model):
+                self.vision_status.setText('测试期间配置已变化，请重新测试当前配置。');return
+            if ok:self.vision_status.setText('已收到图像回复，请核对是否描述了绿色底、浅色四瓣图标；符合后点击“保存设置”。\n'+''.join(chunks))
+        self.vision_worker.completed.connect(completed);self.vision_test_button.setEnabled(False);self.vision_cancel_button.setEnabled(True);self.vision_status.setText('正在发送软件图标测试…网络超时会明确提示，可以取消。');self.vision_worker.start()
+
+    def cancel_vision_test(self):
+        if self.vision_worker:self.vision_worker.cancel()
+        self.vision_status.setText('已请求停止图片测试，网络读取结束后退出。')
 
     def backup(self):
         path,_=QFileDialog.getSaveFileName(self,'保存完整资料包','造物工作台备份.zip','ZIP (*.zip)')
@@ -219,9 +239,13 @@ Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会�
 
     def reject(self):
         self.test_timer.stop()
-        if self.worker and self.worker.isRunning():self.pending_close=True;self.worker.cancel();self.hide();QTimer.singleShot(300,self.reject);return
+        active=[w for w in (self.worker,self.vision_worker) if w and w.isRunning()]
+        if active:
+            self.pending_close=True
+            for worker in active:worker.cancel()
+            self.hide();QTimer.singleShot(300,self.reject);return
         super().reject()
 
     def closeEvent(self,event):
-        if self.worker and self.worker.isRunning():self.reject();event.ignore()
+        if any(w and w.isRunning() for w in (self.worker,self.vision_worker)):self.reject();event.ignore()
         else:super().closeEvent(event)

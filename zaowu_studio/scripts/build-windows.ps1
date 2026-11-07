@@ -38,10 +38,10 @@ $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
 if (-not (Test-Path $compiler)) { throw 'Install Inno Setup 6 to create the Windows installer.' }
 & $compiler 'scripts\installer.iss' 2>&1 | Tee-Object -Variable compilerOutput
 if ($LASTEXITCODE -ne 0) { throw ('Installer compilation failed: ' + (($compilerOutput | Select-Object -Last 12) -join ' ')) }
-Write-Host 'Installer available in dist\installer\ZaowuContentStudio-Setup-0.3.1.exe'
+Write-Host 'Installer available in dist\installer\ZaowuContentStudio-Setup-0.4.0.exe'
 $installDir = Join-Path ([IO.Path]::GetTempPath()) ('zaowu-install-check-' + [Guid]::NewGuid().ToString('N'))
 $setupArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/DIR="' + $installDir + '"'))
-$setup = Start-Process -FilePath 'dist\installer\ZaowuContentStudio-Setup-0.3.1.exe' -ArgumentList $setupArgs -PassThru
+$setup = Start-Process -FilePath 'dist\installer\ZaowuContentStudio-Setup-0.4.0.exe' -ArgumentList $setupArgs -PassThru
 if (-not $setup.WaitForExit(90000)) { $setup.Kill(); throw 'Installer smoke test timed out.' }
 if ($setup.ExitCode -ne 0) { throw 'Installer returned an error.' }
 $installedExe = Join-Path $installDir 'ZaowuContentStudio.exe'

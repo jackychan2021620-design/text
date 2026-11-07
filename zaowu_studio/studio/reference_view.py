@@ -2,7 +2,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt,QTimer,QSize
 from PySide6.QtGui import QIcon,QPixmap
 from PySide6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QListWidget,QListWidgetItem,QPlainTextEdit
-from .widgets import label,button
+from .widgets import label,button,fit_window
 
 class Gallery(QDialog):
     def __init__(self,images,parent=None):
@@ -37,7 +37,7 @@ class ReferenceDialog(QDialog):
     def __init__(self,window,reference_id):
         super().__init__(window);self.window=window;self.reference_id=reference_id
         ref=window.store.get('references',reference_id);images=window.store.reference_images(reference_id)
-        self.setWindowTitle('已收藏的小红书笔记');self.resize(1000,800)
+        self.setWindowTitle('已收藏的小红书笔记');fit_window(self,1000,800)
         layout=QVBoxLayout(self);layout.addWidget(label(ref['title'],'heading',True))
         source=window.store.reference_source(reference_id)
         count=sum(bool(i['path']) and Path(i['path']).is_file() for i in images)
@@ -47,8 +47,10 @@ class ReferenceDialog(QDialog):
         def open_image(item):
             dialog=Gallery(images,self);dialog.show_index(item.data(Qt.ItemDataRole.UserRole));dialog.exec()
         pictures.itemDoubleClicked.connect(open_image);tabs.addTab(pictures,'全部图片');layout.addWidget(tabs,1)
-        actions=QHBoxLayout();actions.addWidget(button('文案拆解与拍摄建议',self.analyze))
-        actions.addWidget(button('让 AI 看图后给拍摄方案',self.vision,True));actions.addStretch();actions.addWidget(button('用这个案例建选题',self.use));actions.addWidget(button('关闭',self.accept));layout.addLayout(actions)
+        layout.addWidget(label('生成时自动看图，再用原来的 DeepSeek 整理补拍清单、图片顺序和笔记草稿。首次使用需在设置配置图片识别服务。','muted',True))
+        actions=QHBoxLayout();actions.addWidget(button('生成拍摄与发布方案',self.vision,True))
+        actions.addWidget(button('查看上次方案',self.last_plan));actions.addStretch();actions.addWidget(button('用这个案例建选题',self.use));actions.addWidget(button('关闭',self.accept));layout.addLayout(actions)
+        secondary=QHBoxLayout();secondary.addWidget(button('只分析文案',self.analyze));secondary.addStretch();layout.addLayout(secondary)
         if source:
             def retry():
                 self.accept();QTimer.singleShot(0,lambda:window.import_xhs(source['source_url']))
@@ -56,5 +58,11 @@ class ReferenceDialog(QDialog):
 
     def analyze(self):self.window.ask('拍摄与发布方案',reference_id=self.reference_id)
     def vision(self):self.window.ask('看图拍摄方案',reference_id=self.reference_id)
+    def last_plan(self):
+        from .ai_dialog import AIDialog
+        from .widgets import info
+        row=self.window.store.latest_reference_plan(self.reference_id)
+        if not row:info(self,'这个案例还没有已完成的拍摄与发布方案。点击“生成拍摄与发布方案”开始。');return
+        AIDialog(self.window,row['task'],{'business':row['business']},history_run=row).exec()
     def use(self):
         ref=self.window.store.get('references',self.reference_id);self.window.new_piece(reference=ref)

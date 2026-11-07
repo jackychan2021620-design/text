@@ -89,6 +89,6 @@ jobs:
           }
           tag="studio-preview-${BUILD_SHA}"
           if ! gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
-            run_gh release create "$tag" --repo "$GH_REPO" --target "$BUILD_SHA" --prerelease --title "造物手作内容工作台 0.3.1 修复版" --notes "Windows x64 安装包。网页读取改为独立进程，超时或无响应可取消，主工作台仍可操作；图片后台保存。首页固定新增产品和管理入口。原 DeepSeek Key 用于文字功能，保存后自动验证，错误和超时明确显示；看图服务仍使用独立 Key。增加挂起进程回归测试及安装后检查。小红书真实笔记仍受平台登录及访问条件影响，不保证任意链接均可完整读取。"
+            run_gh release create "$tag" --repo "$GH_REPO" --target "$BUILD_SHA" --prerelease --title "造物手作内容工作台 0.4.0 图文方案版" --notes "Windows x64 安装包。统一入口自动衔接图片识别与 DeepSeek 拍摄发布方案：保留原 DeepSeek Key，首次另配 Qwen 或 OpenAI 视觉 Key 和模型。显示两步进度，图片编码和请求均在后台；失败明确显示，同一窗口修改或重试复用已完成的图片观察。方案按案例保存，可查看上次方案和复制。升级保留原资料。已通过模拟接口回归及 Windows 安装检查；真实视觉服务需有效账号在本机验证，小红书读取仍受平台访问条件影响。"
           fi
           run_gh release upload "$tag" installer/*.exe --repo "$GH_REPO" --clobber

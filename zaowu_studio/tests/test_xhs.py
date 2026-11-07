@@ -148,8 +148,9 @@ def test_confirmed_visual_analysis_sends_pixels_but_does_not_store_base64(store,
     from studio.ui import MainWindow
     from studio.ai_dialog import AIDialog
     from test_ai import Response as AIResponse
-    ref=saved_images(store,tmp_path,app);window=MainWindow(store);window.runtime_vision_key='not-a-real-key'
+    ref=saved_images(store,tmp_path,app);window=MainWindow(store);window.runtime_vision_key='not-a-real-key';window.runtime_key='synthetic-deepseek-key'
     store.set_setting('vision_model','configured-vision-model')
+    store.set_setting('model','configured-text-model')
     monkeypatch.setattr(QDialog,'exec',lambda self:QDialog.DialogCode.Accepted)
     requests=[]
     def post(url,**kwargs):requests.append(kwargs['json']);return AIResponse(['data: {"choices":[{"delta":{"content":"Synthetic visual reply"}}]}','data: [DONE]'])
@@ -163,6 +164,7 @@ def test_confirmed_visual_analysis_sends_pixels_but_does_not_store_base64(store,
     sent=requests[0]['messages'][-1]['content']
     assert sum(item['type']=='image_url' for item in sent)==2
     assert 'data:image/png;base64,' in json.dumps(sent)
+    assert len(requests)==2 and 'data:image/png;base64,' not in json.dumps(requests[1])
     persisted=store.rows('ai_runs')[0]['context']
     assert 'data:image/png;base64,' not in persisted and 'not-a-real-key' not in persisted
     dialog.reject();window.force_quit=True;window.close()
