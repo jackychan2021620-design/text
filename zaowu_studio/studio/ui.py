@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
     QFileDialog,QDialogButtonBox,QTextEdit)
 from .model import BUSINESSES,STAGES,TABLES,PIECE_FIELDS
 from .store import display_money
-from .widgets import STYLE,label,button,frame,document,scroll,EditDialog,confirm,error,info
+from .widgets import STYLE,label,button,frame,document,scroll,EditDialog,confirm,error,info,fit_window
 from .workspace import PieceDialog,edit_asset
 from .ai_dialog import AIDialog
 from .settings import SettingsDialog
@@ -21,8 +21,9 @@ class MainWindow(QMainWindow):
     TITLES=('今日工作','内容工作室','资料库','效果复盘')
     def __init__(self,store):
         super().__init__();self.store=store;self.runtime_key='';self.runtime_vision_key='';self.current=0;self.force_quit=False
+        self.import_job=None;self.settings_dialog=None
         self.setWindowTitle('造物手作 · AI 获客与内容运营工作台');self.setWindowIcon(QIcon(str(ICON)))
-        self.resize(1280,840);self.setMinimumSize(980,650);self.setStyleSheet(STYLE)
+        self.setMinimumSize(840,500);fit_window(self,1280,840);self.setStyleSheet(STYLE)
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         sidebar=QFrame();sidebar.setObjectName('sidebar');sidebar.setFixedWidth(195)
         nav=QVBoxLayout(sidebar);nav.setContentsMargins(18,28,18,20);nav.setSpacing(10)
@@ -68,6 +69,9 @@ class MainWindow(QMainWindow):
         eyebrow=QHBoxLayout();eyebrow.addWidget(label(date.today().strftime('%Y.%m.%d')+'  /  今天只推进一步','eyebrow'));eyebrow.addStretch();layout.addLayout(eyebrow)
         quick=QHBoxLayout();link=QLineEdit();link.setPlaceholderText('发现好笔记？粘贴小红书分享文字或链接…')
         quick.addWidget(link,1);quick.addWidget(button('读取并收藏',lambda:self.import_xhs(link.text()),True));layout.addLayout(quick)
+        product_bar=QHBoxLayout();product_bar.addWidget(label(f'产品与服务 · {len(self.store.rows("offers",self.focus))} 项','muted'),1)
+        product_bar.addWidget(button('新增产品 / 服务',lambda:self.edit_entity('offers')))
+        product_bar.addWidget(button('管理已录项目',lambda:self.navigate(2)));layout.addLayout(product_bar)
         hero,inside=frame('hero');inside.setContentsMargins(30,28,30,28)
         piece=self.store.next_piece(self.focus);offers=self.store.rows('offers',self.focus);refs=self.store.rows('references',self.focus)
         if piece:
@@ -185,7 +189,7 @@ class MainWindow(QMainWindow):
             def view_note():
                 row_id=selected()
                 if row_id:
-                    from .xhs_dialog import ReferenceDialog
+                    from .reference_view import ReferenceDialog
                     ReferenceDialog(self,row_id).exec()
             actions.addWidget(button('查看图文',view_note))
             def analyze():
@@ -274,10 +278,45 @@ class MainWindow(QMainWindow):
 
     def import_xhs(self,text=''):
         try:
-            from .xhs_dialog import ImportDialog,ReferenceDialog
-            dialog=ImportDialog(self,text)
-            if dialog.exec() and dialog.reference_id:
-                self.refresh();ReferenceDialog(self,dialog.reference_id).exec()
+            from .import_job import ImportJob,SaveNoteWorker
+            from .xhs import shared_url
+            if self.import_job and (self.import_job.running() or (getattr(self.import_job,'save_worker',None) and self.import_job.save_worker.isRunning())):
+                self.import_notice.show();self.import_notice.raise_();return
+            if not text:
+                from PySide6.QtWidgets import QInputDialog
+                text,ok=QInputDialog.getText(self,'收藏小红书笔记','粘贴分享文字或链接')
+                if not ok:return
+            shared_url(text)
+            business=self.focus
+            job=ImportJob(self);self.import_job=job
+            notice=QDialog(self);notice.setWindowModality(Qt.WindowModality.NonModal);notice.setWindowTitle('小红书读取 · 独立运行')
+            fit_window(notice,570,230);body=QVBoxLayout(notice)
+            status=label('正在启动独立网页窗口…','',True);body.addWidget(status)
+            body.addWidget(label('工作台可以继续使用。网页卡住时可取消，不会关闭主工作台。','muted',True))
+            row=QHBoxLayout();cancel_button=button('取消本次读取',job.cancel);row.addWidget(cancel_button);row.addWidget(button('收起',notice.hide));body.addLayout(row)
+            self.import_notice=notice
+            job.status.connect(status.setText)
+            def failed(message):status.setText(message);self.statusBar().showMessage(message,15000)
+            job.failed.connect(failed)
+            def received(note,images):
+                try:
+                    existing=self.store.existing_note(note.note_id,business)
+                    if existing and not confirm(self,'这篇笔记已收藏。是否更新原文及图片，并保留人工拆解？'):return
+                    worker=SaveNoteWorker(self.store.root,note,images,business,update=bool(existing),parent=self)
+                    job.save_worker=worker
+                    cancel_button.setEnabled(False)
+                    status.setText('正在后台保存文案和图片，工作台可以继续使用。')
+                    def saved(ref):
+                        notice.hide();self.refresh()
+                        from .reference_view import ReferenceDialog
+                        viewer=ReferenceDialog(self,ref);viewer.setWindowModality(Qt.WindowModality.NonModal);viewer.show()
+                    worker.saved.connect(saved);worker.failed.connect(failed);worker.finished.connect(job.cleanup);worker.start()
+                except Exception as exc:failed(str(exc))
+            job.result.connect(received)
+            def stopped():
+                if job.cancelled:status.setText(job.error_message or '本次读取已取消，可继续使用工作台。')
+                if not getattr(job,'save_worker',None):job.cleanup()
+            job.stopped.connect(stopped);notice.show();job.start(text)
         except Exception as exc:error(self,'无法打开笔记读取窗口：'+str(exc))
 
     def export_review(self):
@@ -286,7 +325,9 @@ class MainWindow(QMainWindow):
             try:self.store.export_review(path,self.focus);info(self,'已导出。金额单位为元，未知指标保留为空。')
             except Exception as exc:error(self,exc)
 
-    def settings(self):SettingsDialog(self).exec();self.refresh()
+    def settings(self):
+        if self.settings_dialog and self.settings_dialog.isVisible():self.settings_dialog.raise_();self.settings_dialog.activateWindow();return
+        self.settings_dialog=SettingsDialog(self);self.settings_dialog.setWindowModality(Qt.WindowModality.NonModal);self.settings_dialog.show()
 
     def maintain(self):
         try:self.store.maintain()
@@ -295,10 +336,13 @@ class MainWindow(QMainWindow):
     def quit_app(self):self.force_quit=True;self.close()
 
     def closeEvent(self,event):
+        if self.import_job and self.import_job.running():
+            self.import_job.cancel();event.ignore();QTimer.singleShot(500,self.close);return
         from PySide6.QtCore import QThread
         workers=[w for w in self.findChildren(QThread) if w.isRunning() and hasattr(w,'cancel')]
         if workers:
             for worker in workers:worker.cancel()
+            self.statusBar().showMessage('正在完成后台保存或结束连接请求，请稍候；窗口仍可移动。')
             event.ignore();QTimer.singleShot(500,self.close);return
         if not self.force_quit and self.tray and self.store.setting('background','0')=='1':self.hide();event.ignore();return
         if self.tray:self.tray.hide()

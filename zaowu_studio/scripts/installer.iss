@@ -1,5 +1,5 @@
 #define AppName "造物手作 AI 获客与内容运营工作台"
-#define AppVersion "0.3.0"
+#define AppVersion "0.3.1"
 [Setup]
 AppId={{7AA9F1B9-4715-4F93-9086-148217D49119}
 AppName={#AppName}

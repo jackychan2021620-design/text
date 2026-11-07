@@ -24,3 +24,15 @@ def test_icon_has_seven_sizes():
     assert struct.unpack('<HHH',raw[:6])==(0,1,7)
     sizes=[raw[6+16*i] or 256 for i in range(7)]
     assert sizes==[16,24,32,48,64,128,256]
+
+def test_entrypoint_import_process_isolation_smoke(tmp_path):
+    cwd=Path(__file__).resolve().parents[1]
+    env=dict(os.environ,ZAOWU_STUDIO_DATA_DIR=str(tmp_path/'isolated'),QT_QPA_PLATFORM='offscreen')
+    result=subprocess.run([sys.executable,'launch.py','--import-isolation-smoke-test'],cwd=cwd,env=env,capture_output=True,text=True,timeout=15)
+    assert result.returncode==0,result.stderr
+
+def test_main_ui_does_not_load_embedded_chromium():
+    cwd=Path(__file__).resolve().parents[1]
+    script='import sys; import studio.ui; assert "PySide6.QtWebEngineWidgets" not in sys.modules; from studio.reference_view import ReferenceDialog; assert "PySide6.QtWebEngineWidgets" not in sys.modules'
+    result=subprocess.run([sys.executable,'-c',script],cwd=cwd,capture_output=True,text=True,timeout=10)
+    assert result.returncode==0,result.stderr

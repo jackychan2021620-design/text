@@ -5,7 +5,7 @@ from PySide6.QtCore import QTimer,QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QFormLayout,
     QLineEdit,QComboBox,QCheckBox,QFileDialog)
-from .widgets import label,button,Fields,document,confirm,error,info,scroll
+from .widgets import label,button,Fields,document,confirm,error,info,scroll,fit_window
 from .model import f
 from .ai import AIWorker,api_key,save_api_key,endpoint
 
@@ -37,10 +37,11 @@ def set_autorun(enabled):
 class SettingsDialog(QDialog):
     def __init__(self,window):
         super().__init__(window);self.window=window;self.store=window.store;self.worker=None;self.pending_close=False
-        self.setWindowTitle('设置 · 造物手作');self.resize(700,760)
+        self.setWindowTitle('设置 · 造物手作');fit_window(self,700,760)
+        self.auto_save_model=False;self.test_seconds=0;self.credential_notice=''
         layout=QVBoxLayout(self);layout.setContentsMargins(24,22,24,22)
         layout.addWidget(label('让工作台了解你的生意','heading'))
-        tabs=QTabWidget();layout.addWidget(tabs,1)
+        tabs=QTabWidget();self.tabs=tabs;layout.addWidget(tabs,1)
         body=QWidget();profile_layout=QVBoxLayout(body)
         values=json.loads(self.store.setting('profile','{}'))
         self.profile=Fields(self.store,PROFILE_FIELDS,values);profile_layout.addWidget(self.profile)
@@ -50,13 +51,15 @@ class SettingsDialog(QDialog):
         self.autorun=QCheckBox('登录 Windows 时启动（默认关闭）');self.autorun.setEnabled(sys.platform=='win32');self.autorun.setChecked(autorun_enabled());profile_layout.addWidget(self.autorun)
         tabs.addTab(scroll(body),'门店与时间')
         ai=QWidget();ai_layout=QVBoxLayout(ai);form=QFormLayout()
+        ai_layout.addWidget(label('原来的 DeepSeek API Key 可以继续使用。用于选题、文案、咨询和复盘；保存后会自动验证并获取模型。','muted',True))
         self.base=QLineEdit(self.store.setting('api_base','https://api.deepseek.com'))
         self.key=QLineEdit();self.key.setEchoMode(QLineEdit.EchoMode.Password);self.key.setPlaceholderText('留空保留已有 Key')
         self.persist=QCheckBox('保存到系统安全凭据库');self.persist.setChecked(sys.platform=='win32')
-        self.model=QComboBox()
+        self.model=QComboBox();self.model.setEditable(True);self.model.setMinimumContentsLength(14)
         if self.store.setting('model'):self.model.addItem(self.store.setting('model'))
         form.addRow('官方 API 地址',self.base);form.addRow('API Key',self.key);form.addRow('',self.persist);form.addRow('从服务获取的模型',self.model);ai_layout.addLayout(form)
-        self.test_button=button('测试连接并获取模型',self.test,True);ai_layout.addWidget(self.test_button)
+        test_row=QHBoxLayout();self.test_button=button('测试连接并获取模型',self.test,True);test_row.addWidget(self.test_button)
+        self.cancel_button=button('取消测试',self.cancel_test);self.cancel_button.setEnabled(False);test_row.addWidget(self.cancel_button);ai_layout.addLayout(test_row)
         self.ai_status=label('未配置 Key 时仍可整理资料、手动创作和记录效果。','muted',True);ai_layout.addWidget(self.ai_status)
         ai_layout.addWidget(document('''### 数据由你控制
 
@@ -64,10 +67,10 @@ class SettingsDialog(QDialog):
 
 Key 使用独立的系统凭据条目，不写入 SQLite。安全凭据库不可用时可只在本次运行使用。
 
-当前 DeepSeek 接入仅使用文字。照片、视频不会上传；自动网页抓取、图片识别与自动剪辑尚未接入。
+这个标签用于 DeepSeek 文字功能。参考图文可以收藏；只有另行配置看图服务并确认时才会发送图片。
 
 模型从官方接口返回后选择，未写死模型名。连接测试只验证模型列表；聊天生成需要另行验证。'''),1)
-        tabs.addTab(ai,'AI 连接')
+        tabs.addTab(scroll(ai),'DeepSeek 文字')
         vision=QWidget();vl=QVBoxLayout(vision);vf=QFormLayout()
         self.vision_provider=QComboBox();self.vision_provider.addItems(('阿里云百炼 / Qwen 视觉','OpenAI 视觉'))
         self.vision_base=QLineEdit(self.store.setting('vision_base','https://dashscope.aliyuncs.com/compatible-mode/v1'))
@@ -86,7 +89,7 @@ Key 使用独立的系统凭据条目，不写入 SQLite。安全凭据库不可
 模型 ID 以服务商控制台和权限为准，不根据名字猜测。阿里云官方 Qwen3-VL 仓库给出的兼容地址为本页默认地址。
 
 Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会把 DeepSeek 文字接口冒充看图接口。
-'''),1);tabs.addTab(vision,'图片分析')
+'''),1);tabs.addTab(scroll(vision),'图片分析（另需 Key）')
         data=QWidget();data_layout=QVBoxLayout(data)
         data_layout.addWidget(label('资料保存在：'+str(self.store.root),'muted',True))
         data_layout.addWidget(button('备份整个工作台资料',self.backup))
@@ -103,45 +106,86 @@ Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会�
 卸载默认保留资料。升级安装替换程序文件，不覆盖用户资料。
 '''),1);tabs.addTab(data,'资料与备份')
         self.notice=label('','muted',True);layout.addWidget(self.notice)
-        row=QHBoxLayout();row.addStretch();row.addWidget(button('关闭',self.reject));row.addWidget(button('保存设置',self.save,True));layout.addLayout(row)
+        row=QHBoxLayout();row.addStretch();row.addWidget(button('关闭',self.reject));self.save_button=button('保存设置',self.save,True);row.addWidget(self.save_button);layout.addLayout(row)
+        self.key.textChanged.connect(self.key_edited)
+        self.test_timer=QTimer(self);self.test_timer.setInterval(1000);self.test_timer.timeout.connect(self.test_tick)
+
+    def key_edited(self,text):
+        if text.strip():self.ai_status.setText('已输入 DeepSeek Key。点击“保存设置”会自动验证；也可先点击“测试连接”。')
+
+    def test_tick(self):
+        self.test_seconds+=1
+        self.ai_status.setText(f'正在验证 DeepSeek Key… {self.test_seconds} 秒。网络超时会明确提示，可以继续编辑或取消。')
+
+    def cancel_test(self):
+        if self.worker:self.worker.cancel()
+        self.test_timer.stop();self.auto_save_model=False
+        self.ai_status.setText('测试已取消。网络请求结束前仍可编辑其他设置，最迟在超时后退出。')
 
     def test(self):
         if self.worker and self.worker.isRunning():return
         key=self.key.text().strip() or self.window.runtime_key or api_key()
+        if not key:self.ai_status.setText('请先在上方输入原来的 DeepSeek API Key。');return
+        self.tested_key=key
         self.worker=AIWorker(self.base.text().strip(),key,parent=self)
-        self.worker.models.connect(self.got_models);self.worker.failed.connect(self.ai_status.setText)
-        self.worker.completed.connect(lambda _:self.test_button.setEnabled(True))
-        self.test_button.setEnabled(False);self.ai_status.setText('正在测试连接…');self.worker.start()
+        self.worker.models.connect(self.got_models);self.worker.failed.connect(self.test_failed)
+        self.worker.completed.connect(self.test_finished)
+        self.test_button.setEnabled(False);self.cancel_button.setEnabled(True);self.test_seconds=0;self.test_timer.start();self.ai_status.setText('正在验证 DeepSeek Key…');self.worker.start()
+
+    def test_finished(self,ok):
+        self.test_timer.stop();self.test_button.setEnabled(True);self.cancel_button.setEnabled(False)
+        if not ok:self.auto_save_model=False
+        if self.pending_close:QTimer.singleShot(50,self.reject)
+
+    def test_failed(self,message):
+        self.ai_status.setText(message);self.notice.setText('DeepSeek 连接未完成：'+message)
 
     def got_models(self,models):
+        if self.worker and self.worker.cancelled.is_set():return
+        current_key=self.key.text().strip() or self.window.runtime_key or self.tested_key
+        if current_key!=self.tested_key:
+            self.auto_save_model=False;self.ai_status.setText('测试期间 Key 已更改，请再次保存以验证当前 Key。');return
         current=self.model.currentText();self.model.clear();self.model.addItems(models)
         if current in models:self.model.setCurrentText(current)
         self.ai_status.setText('已从服务获取模型。请选择模型，再保存设置。')
+        if self.auto_save_model:
+            self.store.set_setting('model',self.model.currentText());self.auto_save_model=False
+            self.ai_status.setText('DeepSeek 连接成功，Key 和模型已配置。可以使用文字功能。')
+            self.notice.setText('设置已保存。'+self.credential_notice)
 
     def save(self):
         try:
             base=endpoint(self.base.text().strip());weekly=int(self.weekly.text());research=int(self.research.text())
             if not 1<=weekly<=10080 or not 1<=research<=10080:raise ValueError('时间预算应为1～10080分钟')
-            key=self.key.text().strip()
-            if key:
-                if self.persist.isChecked():save_api_key(key)
-                self.window.runtime_key=key
             vision_base=endpoint(self.vision_base.text().strip(),vision=True)
+            key=self.key.text().strip();self.credential_notice=''
+            if key:
+                self.window.runtime_key=key
+                if self.persist.isChecked():
+                    try:save_api_key(key)
+                    except Exception:self.credential_notice='系统凭据保存未成功，Key 已在本次运行中生效，重启后需重新输入。'
             vision_key=self.vision_key.text().strip()
             if vision_key:
-                if self.vision_persist.isChecked():save_api_key(vision_key,vision=True)
+                if vision_key==key or vision_key==self.window.runtime_key:raise ValueError('DeepSeek Key 应填在“DeepSeek 文字”标签。看图服务需要其对应的 Key。')
                 self.window.runtime_vision_key=vision_key
+                if self.vision_persist.isChecked():
+                    try:save_api_key(vision_key,vision=True)
+                    except Exception:self.credential_notice+=' 看图 Key 仅在本次运行生效。'
             set_autorun(self.autorun.isChecked())
             values={'profile':json.dumps(self.profile.values(),ensure_ascii=False),'weekly_minutes':weekly,'research_minutes':research,
                     'api_base':base,'model':self.model.currentText(),'background':int(self.background.isChecked()),
                     'vision_base':vision_base,'vision_model':self.vision_model.text().strip()}
             with self.store.transaction():
                 for k,v in values.items():self.store.db.execute('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(k,str(v)))
-            self.key.clear();self.vision_key.clear();self.notice.setText('设置已保存。');self.window.refresh()
+            self.key.clear();self.vision_key.clear();self.notice.setText('设置已保存。'+self.credential_notice);self.window.refresh()
+            if key:
+                self.auto_save_model=True;self.test()
         except Exception as exc:self.notice.setText(str(exc))
 
     def test_vision(self):
         if self.worker and self.worker.isRunning():return
+        typed=self.vision_key.text().strip()
+        if typed and typed in (self.key.text().strip(),self.window.runtime_key):self.vision_status.setText('这是正在使用的 DeepSeek Key，请填到“DeepSeek 文字”；此处需要看图服务对应的 Key。');return
         model=self.vision_model.text().strip()
         if not model:self.vision_status.setText('请先填写服务商控制台中可用的视觉模型 ID。');return
         import base64
@@ -174,9 +218,10 @@ Qwen 官方参考：https://github.com/QwenLM/Qwen3-VL 。当前工作台不会�
             except Exception as exc:error(self,exc)
 
     def reject(self):
-        if self.worker and self.worker.isRunning():self.worker.cancel();QTimer.singleShot(300,self.reject);return
+        self.test_timer.stop()
+        if self.worker and self.worker.isRunning():self.pending_close=True;self.worker.cancel();self.hide();QTimer.singleShot(300,self.reject);return
         super().reject()
 
     def closeEvent(self,event):
-        if self.worker and self.worker.isRunning():self.worker.cancel();event.ignore();QTimer.singleShot(300,self.reject)
-        else:event.accept()
+        if self.worker and self.worker.isRunning():self.reject();event.ignore()
+        else:super().closeEvent(event)

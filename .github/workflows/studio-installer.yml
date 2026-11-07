@@ -89,6 +89,6 @@ jobs:
           }
           tag="studio-preview-${BUILD_SHA}"
           if ! gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
-            run_gh release create "$tag" --repo "$GH_REPO" --target "$BUILD_SHA" --prerelease --title "造物手作内容工作台 0.3.0 图文收藏试用版" --notes "Windows x64 安装包。新增小红书分享链接读取、本机网页登录、文案和图片按顺序收藏、拍摄与发布建议，以及独立视觉接口。需要登录或平台限制时明确提示，不绕过验证；图片缺失不会冒充完整。文本 AI 和看图模型需分别配置 Key。构建验证包含离线网页提取，不代表用户提供的每一篇真实笔记均已通过联网验证。"
+            run_gh release create "$tag" --repo "$GH_REPO" --target "$BUILD_SHA" --prerelease --title "造物手作内容工作台 0.3.1 修复版" --notes "Windows x64 安装包。网页读取改为独立进程，超时或无响应可取消，主工作台仍可操作；图片后台保存。首页固定新增产品和管理入口。原 DeepSeek Key 用于文字功能，保存后自动验证，错误和超时明确显示；看图服务仍使用独立 Key。增加挂起进程回归测试及安装后检查。小红书真实笔记仍受平台登录及访问条件影响，不保证任意链接均可完整读取。"
           fi
           run_gh release upload "$tag" installer/*.exe --repo "$GH_REPO" --clobber

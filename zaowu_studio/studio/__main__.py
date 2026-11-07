@@ -5,8 +5,17 @@ from .store import Store,data_dir
 from .ui import MainWindow
 
 def main():
+    if '--hang-test-helper' in sys.argv:
+        import time
+        time.sleep(60)
+        return 0
+    if '--note-import-helper' in sys.argv:
+        from .import_job import run_browser_helper
+        index=sys.argv.index('--note-import-helper')
+        return run_browser_helper(sys.argv[index+1]) if len(sys.argv)>index+1 else 1
     browser_smoke='--browser-smoke-test' in sys.argv
-    smoke='--smoke-test' in sys.argv or browser_smoke
+    isolation_smoke='--import-isolation-smoke-test' in sys.argv
+    smoke='--smoke-test' in sys.argv or browser_smoke or isolation_smoke
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app=QApplication(sys.argv);app.setApplicationName('造物手作内容工作台');app.setOrganizationName('Zaowu')
     root=data_dir();root.mkdir(parents=True,exist_ok=True)
@@ -18,7 +27,15 @@ def main():
         with store.db:store.db.execute("UPDATE ai_runs SET status='未完成' WHERE status='生成中'")
         store.maintain()
         window=MainWindow(store);window.show()
-        if browser_smoke:
+        if isolation_smoke:
+            from .import_job import ImportJob
+            args=[sys.executable]+([] if getattr(sys,'frozen',False) else [str(__import__('pathlib').Path(__file__).resolve().parents[1]/'launch.py')])+['--hang-test-helper']
+            job=ImportJob(window,command=args,startup_seconds=1);window._isolation_job=job
+            ticks=[0];heartbeat=QTimer(window);heartbeat.setInterval(50);heartbeat.timeout.connect(lambda:ticks.__setitem__(0,ticks[0]+1));heartbeat.start()
+            def stopped():
+                job.cleanup();app.exit(0 if ticks[0]>=8 else 1)
+            job.stopped.connect(stopped);job.start('fixture');QTimer.singleShot(10000,lambda:app.exit(1))
+        elif browser_smoke:
             import json
             from PySide6.QtWebEngineCore import QWebEngineProfile,QWebEnginePage
             from .xhs import EXTRACT_JS,parse_note

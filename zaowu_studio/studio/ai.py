@@ -2,6 +2,7 @@
 import json
 import os
 import threading
+import sys
 from urllib.parse import urlparse
 
 import requests
@@ -25,18 +26,24 @@ def api_key(vision=False):
         return key
     try:
         import keyring
+        if sys.platform=='win32':
+            from keyring.backends.Windows import WinVaultKeyring
+            return WinVaultKeyring().get_password(VISION_SERVICE if vision else SERVICE,'api-key') or ''
         return keyring.get_password(VISION_SERVICE if vision else SERVICE,'api-key') or ''
     except Exception:
         return ''
 
 def save_api_key(value,vision=False):
     import keyring
-    backend = keyring.get_keyring()
+    if sys.platform=='win32':
+        from keyring.backends.Windows import WinVaultKeyring
+        backend=WinVaultKeyring()
+    else:backend = keyring.get_keyring()
     # Refuse third-party plaintext fallback backends.
     module = backend.__class__.__module__
     if not module.startswith(('keyring.backends.Windows','keyring.backends.macOS','keyring.backends.SecretService','keyring.backends.kwallet')):
         raise ValueError('系统安全凭据存储不可用。可以只在本次运行使用 Key，或设置 ZAOWU_STUDIO_API_KEY；不会保存明文。')
-    keyring.set_password(VISION_SERVICE if vision else SERVICE,'api-key',value)
+    backend.set_password(VISION_SERVICE if vision else SERVICE,'api-key',value)
 
 def endpoint(base,vision=False):
     url = urlparse(base)
@@ -78,7 +85,9 @@ class AIWorker(QThread):
                 raise ValueError('请先配置看图服务的 API Key。' if self.vision else '请先在设置输入 DeepSeek API Key；资料整理和手动创作仍可正常使用。')
             headers={'Authorization':'Bearer '+self.key,'Content-Type':'application/json'}
             if self.messages is None:
-                with requests.get(base+'/models',headers=headers,timeout=(10,30),allow_redirects=False) as response:
+                with requests.get(base+'/models',headers=headers,timeout=(8,12),allow_redirects=False) as response:
+                    if self.cancelled.is_set():
+                        self.failed.emit('连接测试已取消。');return
                     if response.status_code!=200:
                         raise ValueError(safe_error(response))
                     models=[m['id'] for m in response.json().get('data',[]) if isinstance(m,dict) and isinstance(m.get('id'),str)]

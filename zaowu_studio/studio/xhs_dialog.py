@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLineEdit,QSplitt
     QTabWidget,QListWidget,QListWidgetItem,QPlainTextEdit,QProgressBar,QMessageBox)
 from PySide6.QtWebEngineCore import QWebEnginePage,QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from .widgets import label,button,error,info,confirm
+from .widgets import label,button,error,info,confirm,fit_window
 from .xhs import shared_url,parse_note,EXTRACT_JS,ImageWorker
 
 class NotePage(QWebEnginePage):
@@ -24,39 +24,13 @@ class NotePage(QWebEnginePage):
         # Third-party pages can log account details. Never forward them to app logs.
         pass
 
-class Gallery(QDialog):
-    def __init__(self,images,parent=None):
-        super().__init__(parent);self.images=images;self.index=0
-        self.setWindowTitle('参考笔记图片 · 仅供分析');self.resize(900,800)
-        layout=QVBoxLayout(self);self.position=label('','muted');layout.addWidget(self.position)
-        self.image=label('');self.image.setAlignment(Qt.AlignmentFlag.AlignCenter);layout.addWidget(self.image,1)
-        actions=QHBoxLayout();actions.addWidget(button('上一张',lambda:self.show_index(self.index-1)));actions.addWidget(button('下一张',lambda:self.show_index(self.index+1)));actions.addStretch();actions.addWidget(button('关闭',self.accept));layout.addLayout(actions)
-        self.show_index(0)
-
-    def show_index(self,index):
-        if not self.images:return
-        self.index=max(0,min(index,len(self.images)-1));row=self.images[self.index]
-        self.position.setText(f"第 {row['position']} / {len(self.images)} 张 · 原笔记顺序")
-        path=row.get('path')
-        if path and Path(path).is_file():
-            pixmap=QPixmap(path)
-            self.image.setPixmap(pixmap.scaled(max(300,self.width()-40),max(300,self.height()-110),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
-        else:self.image.clear();self.image.setText('此图片未读到：'+row.get('error','文件缺失'))
-
-    def resizeEvent(self,event):super().resizeEvent(event);self.show_index(self.index)
-
-def image_items(widget,images):
-    widget.clear();widget.setIconSize(QSize(150,150))
-    for row in images:
-        item=QListWidgetItem(f"第 {row['position']} 张"+(' · 未读到' if not row.get('path') else ''))
-        if row.get('path'):item.setIcon(QIcon(row['path']))
-        item.setToolTip(row.get('error','') or '双击查看大图')
-        item.setData(Qt.ItemDataRole.UserRole,row['position']-1);widget.addItem(item)
+from .reference_view import Gallery,image_items
 
 class ImportDialog(QDialog):
-    def __init__(self,window,initial_text=''):
+    def __init__(self,window,initial_text='',session_dir=None):
         super().__init__(window);self.window=window;self.store=window.store;self.worker=None;self.note=None;self.images=[];self.reference_id=None;self.closed=False
-        self.setWindowTitle('收藏小红书笔记');self.resize(1250,850)
+        self.session_dir=Path(session_dir) if session_dir else None
+        self.setWindowTitle('收藏小红书笔记');fit_window(self,1250,850)
         layout=QVBoxLayout(self);layout.setContentsMargins(22,20,22,18)
         layout.addWidget(label('粘贴链接，收藏文案和图片','heading'))
         row=QHBoxLayout();self.link=QLineEdit();self.link.setPlaceholderText('粘贴小红书复制链接的整段文字，也支持 xhslink.cn 短链接')
@@ -138,6 +112,19 @@ class ImportDialog(QDialog):
         if not self.note or not self.images:return
         count=sum(bool(i['path']) for i in self.images)
         if count<len(self.images) and not confirm(self,f'目前只读到 {count} / {len(self.images)} 张图片。是否先收藏并保留缺失标记？'):return
+        if self.session_dir:
+            import shutil
+            from .import_job import write_json
+            exported=[]
+            for image in self.images:
+                row=dict(image)
+                if row['path']:
+                    target=self.session_dir/f"{row['position']}.png";shutil.copy2(row['path'],target);row['path']=str(target)
+                exported.append(row)
+            payload={'note':{'noteId':self.note.note_id,'title':self.note.title,'desc':self.note.text,'type':self.note.kind,
+                'imageList':[{'urlDefault':u} for u in self.note.images]}}
+            write_json(self.session_dir/'result.json',{'url':self.note.url,'payload':payload,'images':exported})
+            self.accept();return
         existing=self.store.existing_note(self.note.note_id,self.window.focus)
         if existing and not confirm(self,'这篇笔记已收藏。是否更新原文、标题和图片，并保留你填写的拆解与观察？'):return
         try:self.reference_id=self.store.save_imported_note(self.note,self.images,self.window.focus,update=bool(existing))
@@ -158,29 +145,3 @@ class ImportDialog(QDialog):
     def closeEvent(self,event):
         if self.worker and self.worker.isRunning():self.worker.cancel();event.ignore();QTimer.singleShot(300,self.reject)
         else:super().closeEvent(event)
-
-class ReferenceDialog(QDialog):
-    def __init__(self,window,reference_id):
-        super().__init__(window);self.window=window;self.reference_id=reference_id
-        ref=window.store.get('references',reference_id);images=window.store.reference_images(reference_id)
-        self.setWindowTitle('已收藏的小红书笔记');self.resize(1000,800)
-        layout=QVBoxLayout(self);layout.addWidget(label(ref['title'],'heading',True))
-        source=window.store.reference_source(reference_id)
-        count=sum(bool(i['path']) and Path(i['path']).is_file() for i in images)
-        layout.addWidget(label(f"图片 {count} / {len(images)} 张 · 保留原笔记顺序"+(' · 视频仅保存封面' if source and source['kind']=='video' else ''),'muted',True))
-        tabs=QTabWidget();text=QPlainTextEdit();text.setReadOnly(True);text.setPlainText(ref['excerpt']);tabs.addTab(text,'原文案')
-        pictures=QListWidget();pictures.setViewMode(QListWidget.ViewMode.IconMode);pictures.setResizeMode(QListWidget.ResizeMode.Adjust);image_items(pictures,images)
-        def open_image(item):
-            dialog=Gallery(images,self);dialog.show_index(item.data(Qt.ItemDataRole.UserRole));dialog.exec()
-        pictures.itemDoubleClicked.connect(open_image);tabs.addTab(pictures,'全部图片');layout.addWidget(tabs,1)
-        actions=QHBoxLayout();actions.addWidget(button('文案拆解与拍摄建议',self.analyze))
-        actions.addWidget(button('让 AI 看图后给拍摄方案',self.vision,True));actions.addStretch();actions.addWidget(button('用这个案例建选题',self.use));actions.addWidget(button('关闭',self.accept));layout.addLayout(actions)
-        if source:
-            def retry():
-                self.accept();QTimer.singleShot(0,lambda:window.import_xhs(source['source_url']))
-            layout.addWidget(button('重新读取 / 补齐图片',retry))
-
-    def analyze(self):self.window.ask('拍摄与发布方案',reference_id=self.reference_id)
-    def vision(self):self.window.ask('看图拍摄方案',reference_id=self.reference_id)
-    def use(self):
-        ref=self.window.store.get('references',self.reference_id);self.window.new_piece(reference=ref)

@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt,QDate
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLineEdit,QTextEdit,
     QComboBox,QCheckBox,QDateEdit,QPushButton,QDialog,QDialogButtonBox,QScrollArea,QLabel,QFrame,
-    QTextBrowser,QMessageBox,QToolButton,QSizePolicy)
+    QTextBrowser,QMessageBox,QToolButton,QSizePolicy,QApplication)
 from .store import money
 
 STYLE='''
@@ -74,6 +74,13 @@ def confirm(parent,text):
 def error(parent,exc): QMessageBox.warning(parent,'暂时无法完成',str(exc))
 def info(parent,text): QMessageBox.information(parent,'造物手作',text)
 
+def fit_window(widget,width,height):
+    screen=widget.screen() or QApplication.primaryScreen()
+    if screen:
+        available=screen.availableGeometry()
+        width=min(width,max(360,available.width()-32));height=min(height,max(360,available.height()-48))
+    widget.resize(width,height)
+
 class Fields(QWidget):
     def __init__(self,store,fields,values=None,business=None):
         super().__init__()
@@ -137,7 +144,7 @@ def scroll(widget):
 class EditDialog(QDialog):
     def __init__(self,store,title,fields,values=None,business=None,parent=None,save=None,core_keys=None):
         super().__init__(parent)
-        self.setWindowTitle(title);self.resize(640,700)
+        self.setWindowTitle(title);fit_window(self,640,700)
         self.save_callback=save
         self.result_values=None
         layout=QVBoxLayout(self);layout.setContentsMargins(24,22,24,20)
