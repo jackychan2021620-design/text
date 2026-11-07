@@ -50,7 +50,7 @@ class SaveNoteWorker(QThread):
             if store:store.close()
 
 class BrowserRunner(QThread):
-    exited=Signal(int)
+    exited=Signal(object) # Windows exception exit codes can exceed signed int32.
     launch_failed=Signal()
     def __init__(self,command,parent=None):
         super().__init__(parent);self.command=command;self.cancel_event=threading.Event();self.proc=None

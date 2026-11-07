@@ -98,6 +98,15 @@ def test_browser_crash_is_reported_without_closing_main(app,store):
     assert errors and window.store is store
     job.cleanup();window.force_quit=True;window.close()
 
+def test_windows_exception_exit_code_is_reported_without_overflow(app,monkeypatch):
+    from studio.import_job import BrowserRunner
+    class Crashed:
+        returncode=3221225477
+        def poll(self):return self.returncode
+    monkeypatch.setattr('studio.import_job.subprocess.Popen',lambda *a,**k:Crashed())
+    runner=BrowserRunner(['synthetic']);codes=[];runner.exited.connect(codes.append);runner.run()
+    assert codes==[3221225477]
+
 def test_slow_windows_process_creation_does_not_block_gui(app,monkeypatch):
     import threading
     import subprocess
