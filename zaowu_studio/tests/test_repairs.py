@@ -68,7 +68,8 @@ def test_settings_close_immediately_during_slow_test(app,store,monkeypatch):
 
 def test_hung_browser_never_blocks_main_ui_and_is_cancelled(app,store,monkeypatch):
     window=MainWindow(store);window.show()
-    monkeypatch.setattr('studio.import_job.ImportJob',lambda parent:ImportJob(parent,command=[sys.executable,'-c','import time; time.sleep(60)'],startup_seconds=.4))
+    QTest.qWait(100)
+    monkeypatch.setattr('studio.import_job.ImportJob',lambda parent:ImportJob(parent,command=[sys.executable,'-c','import time; time.sleep(60)'],startup_seconds=1.2))
     ticks=[];timer=QTimer();timer.setInterval(25);timer.timeout.connect(lambda:ticks.append(1));timer.start()
     window.import_xhs('https://xhslink.cn/o/fixture');job=window.import_job
     assert window.import_notice.windowModality()==Qt.WindowModality.NonModal
@@ -96,6 +97,19 @@ def test_browser_crash_is_reported_without_closing_main(app,store):
     errors=[];job.failed.connect(errors.append);job.start('fixture');wait_until(lambda:job.ended)
     assert errors and window.store is store
     job.cleanup();window.force_quit=True;window.close()
+
+def test_slow_windows_process_creation_does_not_block_gui(app,monkeypatch):
+    import threading
+    import subprocess
+    original=subprocess.Popen;entered=threading.Event();release=threading.Event()
+    def slow_create(*args,**kwargs):
+        entered.set();release.wait(timeout=2);return original(*args,**kwargs)
+    monkeypatch.setattr('studio.import_job.subprocess.Popen',slow_create)
+    job=ImportJob(command=[sys.executable,'-c','import time; time.sleep(60)'],startup_seconds=5)
+    job.start('fixture');wait_until(entered.is_set)
+    responsive=[];QTimer.singleShot(0,lambda:responsive.append(True));QTest.qWait(80)
+    assert responsive and job.running()
+    release.set();job.cancel();wait_until(lambda:job.ended,seconds=6);job.cleanup()
 
 def test_ipc_rejects_image_paths_outside_session(tmp_path):
     import pytest

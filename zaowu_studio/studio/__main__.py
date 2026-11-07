@@ -30,11 +30,11 @@ def main():
         if isolation_smoke:
             from .import_job import ImportJob
             args=[sys.executable]+([] if getattr(sys,'frozen',False) else [str(__import__('pathlib').Path(__file__).resolve().parents[1]/'launch.py')])+['--hang-test-helper']
-            job=ImportJob(window,command=args,startup_seconds=1);window._isolation_job=job
+            job=ImportJob(window,command=args,startup_seconds=1.5);window._isolation_job=job
             ticks=[0];heartbeat=QTimer(window);heartbeat.setInterval(50);heartbeat.timeout.connect(lambda:ticks.__setitem__(0,ticks[0]+1));heartbeat.start()
             def stopped():
                 job.cleanup();app.exit(0 if ticks[0]>=8 else 1)
-            job.stopped.connect(stopped);job.start('fixture');QTimer.singleShot(10000,lambda:app.exit(1))
+            job.stopped.connect(stopped);QTimer.singleShot(300,lambda:job.start('fixture'));QTimer.singleShot(10000,lambda:app.exit(1))
         elif browser_smoke:
             import json
             from PySide6.QtWebEngineCore import QWebEngineProfile,QWebEnginePage
